@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "simplestoragemanager",
+  "version": "TODO",
+  "name": "Simple Storage Manager",
+  "description": "TODO: Add a description.",
+  "authors": [
+    "InterPlay"
+  ],
+  "license": "TODO",
+  "environment": "*",
+  "depends": {
+    "fabricloader": "TODO",
+    "minecraft": "TODO",
+    "java": "TODO",
+    "fabric-api": "TODO"
+  }
+}

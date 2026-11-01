@@ -1,0 +1,23 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = 'https://maven.minecraftforge.net' }
+    }
+
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:TODO'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+
+version = 'TODO'
+group = 'net.interplay'
+base.archivesName = 'SimpleStorageManager'
+
+// TODO: Set the Java toolchain and mappings for the target Minecraft version.
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+    // TODO: Configure mappings using mappings_version and the chosen mapping provider.
+}

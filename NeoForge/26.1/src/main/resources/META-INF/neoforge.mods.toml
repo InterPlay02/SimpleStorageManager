@@ -1,0 +1,25 @@
+modLoader="javafml"
+loaderVersion="[TODO,)"
+license="TODO"
+
+[[mods]]
+modId="simplestoragemanager"
+version="TODO"
+displayName="Simple Storage Manager"
+displayURL=""
+credits="Created using Codex and Github Copilot."
+authors="InterPlay"
+
+[[dependencies.simplestoragemanager]]
+    modId="neoforge"
+    type="required"
+    versionRange="[TODO,)"
+    ordering="AFTER"
+    side="BOTH"
+
+[[dependencies.simplestoragemanager]]
+    modId="minecraft"
+    type="required"
+    versionRange="[TODO]"
+    ordering="AFTER"
+    side="BOTH"

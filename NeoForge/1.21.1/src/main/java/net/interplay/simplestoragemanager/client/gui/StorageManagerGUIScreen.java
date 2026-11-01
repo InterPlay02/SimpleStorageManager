@@ -1,0 +1,1210 @@
+package net.interplay.simplestoragemanager.client.gui;
+
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.ChatFormatting;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.interplay.simplestoragemanager.access.ConnectionStatus;
+import net.interplay.simplestoragemanager.network.TerminalNoticeDismissPayload;
+import net.interplay.simplestoragemanager.network.TerminalClearCraftingPayload;
+import net.interplay.simplestoragemanager.network.TerminalStorageClickPayload;
+import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
+import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
+import net.interplay.simplestoragemanager.network.TerminalViewPayload;
+import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
+import net.interplay.simplestoragemanager.logic.TerminalScaleChoice;
+import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
+import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
+import net.interplay.simplestoragemanager.init.SimplestoragemanagerModScreens;
+
+import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageManagerGUIMenu>
+        implements SimplestoragemanagerModScreens.ScreenAccessor {
+    private static final ResourceLocation SMALL_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/storage_manager_gui.png");
+    private static final ResourceLocation BIG_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/storage_manager_gui_big.png");
+    private static final ResourceLocation SLOT_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/slot.png");
+    private static final ResourceLocation SCROLLER_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/scroller.png");
+    private static final ResourceLocation SCROLLER_DISABLED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/scroller_disabled.png");
+    private static final ResourceLocation CROSS_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/cross_button.png");
+    private static final ResourceLocation CROSS_HIGHLIGHTED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/cross_button_highlighted.png");
+    private static final ResourceLocation LOCKED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/locked_button.png");
+    private static final ResourceLocation LOCKED_HIGHLIGHTED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/locked_button_highlighted.png");
+    private static final ResourceLocation UNLOCKED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/unlocked_button.png");
+    private static final ResourceLocation UNLOCKED_HIGHLIGHTED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/unlocked_button_highlighted.png");
+    private static final ResourceLocation REPORT_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/report_button.png");
+    private static final ResourceLocation REPORT_HIGHLIGHTED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/report_button_highlighted.png");
+    private static final int SLOT_SIZE = TerminalScreenLayout.SLOT_SIZE;
+
+    private final Player player;
+    private TerminalScreenLayout.Variant variant = TerminalScreenLayout.SMALL;
+    private EditBox searchBar;
+    private TerminalViewPayload view = new TerminalViewPayload(false, 0, 0, List.of(), List.of(), List.of());
+    private final Map<Long, ItemStack> remoteItems = new HashMap<>();
+    private final Map<Long, Integer> remoteSlotLimits = new HashMap<>();
+    private RemoteHit hoveredRemote;
+    private boolean hoveredUnavailableIcon;
+    private boolean hoveredNoticeDismiss;
+    private boolean draggingScroller;
+    private final List<TerminalStorageClickPayload.SlotTarget> remoteDragTargets = new ArrayList<>();
+    private final Map<Long, ItemStack> remotePreviewItems = new HashMap<>();
+    private final Map<Integer, ItemStack> playerPreviewItems = new HashMap<>();
+    private ItemStack remotePreviewCarried;
+    private ItemStack remoteDragInitialCarried = ItemStack.EMPTY;
+    private boolean remoteDragShift;
+    private int remoteDragMode;
+    private int itemDragButton = -1;
+    private boolean itemDragShift;
+    private boolean itemDragMoved;
+    private boolean itemDragCreative;
+    private int itemDragStartSlot = -1;
+    private final Set<Integer> itemDragSlots = new LinkedHashSet<>();
+    private long nextOperationSequence;
+    private long pendingOperationSequence;
+    private long lastAppliedOperationSequence;
+
+    public StorageManagerGUIScreen(StorageManagerGUIMenu menu, Inventory inventory, Component title) {
+        super(menu, inventory, title);
+        player = inventory.player;
+        imageWidth = TerminalScreenLayout.SMALL.imageWidth();
+        imageHeight = TerminalScreenLayout.SMALL.imageHeight();
+    }
+
+    private int remoteSlotLimit(long slotKey, ItemStack stack) {
+        return remoteSlotLimits.getOrDefault(slotKey, stack.getMaxStackSize());
+    }
+
+    @Override
+    protected void init() {
+        int configuredScale = Minecraft.getInstance().options.guiScale().get();
+        boolean useBig = TerminalScaleChoice.useBig(configuredScale);
+        variant = useBig ? TerminalScreenLayout.BIG : TerminalScreenLayout.SMALL;
+        imageWidth = variant.imageWidth();
+        imageHeight = variant.imageHeight();
+        titleLabelX = variant.mainArea().left();
+        super.init();
+        searchBar = new EditBox(font, leftPos + variant.searchArea().left(), topPos + variant.searchArea().top(),
+                variant.searchArea().width(), variant.searchArea().height(),
+                Component.translatable("gui.simplestoragemanager.storage_manager_gui.search_bar"));
+        searchBar.setBordered(false);
+        searchBar.setTextColor(0xFFFFFF);
+        searchBar.setTextColorUneditable(0xFFFFFF);
+        searchBar.setMaxLength(256);
+        searchBar.setResponder(ignored -> requestView(0));
+        addRenderableWidget(searchBar);
+        requestView(0);
+    }
+
+    private void requestView(int scroll) {
+        int clamped = Math.max(0, Math.min(view.maxScroll(), scroll));
+        PacketDistributor.sendToServer(new TerminalViewRequestPayload(searchBar == null ? "" : searchBar.getValue(),
+                clamped, variant == TerminalScreenLayout.BIG));
+    }
+
+    public void applyView(TerminalViewPayload payload) {
+        if (payload.operationSequence() < pendingOperationSequence
+                || payload.operationSequence() < lastAppliedOperationSequence) return;
+        if (pendingOperationSequence > 0 && payload.operationSequence() == pendingOperationSequence
+                && payload.playerSlots().isEmpty()) return;
+        view = payload;
+        lastAppliedOperationSequence = Math.max(lastAppliedOperationSequence, payload.operationSequence());
+        remoteItems.clear();
+        remoteSlotLimits.clear();
+        for (TerminalViewPayload.VisibleSlot slot : payload.visibleSlots()) {
+            remoteItems.put(key(slot.section(), slot.slot()), slot.stack());
+            remoteSlotLimits.put(key(slot.section(), slot.slot()), slot.slotLimit());
+        }
+        applyOriginSlotLimits(payload);
+        if (pendingOperationSequence > 0 && payload.operationSequence() >= pendingOperationSequence
+                && !payload.playerSlots().isEmpty()) {
+            for (TerminalViewPayload.PlayerSlot slot : payload.playerSlots()) {
+                if (slot.slot() >= 0 && slot.slot() < menu.slots.size()) {
+                    menu.slots.get(slot.slot()).set(slot.stack());
+                }
+            }
+            pendingOperationSequence = 0;
+            clearRemotePreview();
+        } else if (pendingOperationSequence == 0 && itemDragButton < 0) {
+            clearRemotePreview();
+        }
+    }
+
+    private void applyOriginSlotLimits(TerminalViewPayload payload) {
+        for (TerminalViewPayload.OriginTarget target : payload.originTargets()) {
+            if (target.section() >= 0 && target.slot() >= 0 && target.slotLimit() > 0) {
+                remoteSlotLimits.put(key(target.section(), target.slot()), target.slotLimit());
+            }
+        }
+    }
+
+    public void applyConnectionStatus(TerminalConnectionStatusPayload payload) {
+        int sectionIndex = payload.section();
+        if (sectionIndex < 0 || sectionIndex >= view.sections().size()) {
+            if (payload.refreshView()) requestView(view.scrollOffset());
+            return;
+        }
+        List<TerminalViewPayload.Section> sections = new ArrayList<>(view.sections());
+        TerminalViewPayload.Section current = sections.get(sectionIndex);
+        sections.set(sectionIndex, new TerminalViewPayload.Section(payload.label(), current.coordinate(),
+                payload.status(), current.slotCount()));
+        List<TerminalViewPayload.VisibleSlot> visibleSlots = new ArrayList<>();
+        for (TerminalViewPayload.VisibleSlot slot : view.visibleSlots()) {
+            if (slot.section() != sectionIndex) visibleSlots.add(slot);
+        }
+        visibleSlots.addAll(payload.visibleSlots());
+        view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(),
+                sections, visibleSlots, view.notices(), view.locked(), view.originTargets(),
+                view.operationSequence(), view.playerSlots(), view.canMutateInventories());
+        remoteItems.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
+        remoteSlotLimits.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
+        for (TerminalViewPayload.VisibleSlot slot : payload.visibleSlots()) {
+            remoteItems.put(key(slot.section(), slot.slot()), slot.stack());
+            remoteSlotLimits.put(key(slot.section(), slot.slot()), slot.slotLimit());
+        }
+        applyOriginSlotLimits(view);
+        if (payload.refreshView()) requestView(view.scrollOffset());
+    }
+
+    @Override
+    protected void renderBg(GuiGraphics graphics, float partialTick, int mouseX, int mouseY) {
+        RenderSystem.setShaderColor(1, 1, 1, 1);
+        graphics.blit(variant == TerminalScreenLayout.BIG ? BIG_TEXTURE : SMALL_TEXTURE,
+                leftPos, topPos, 0, 0, imageWidth, imageHeight, imageWidth, imageHeight);
+
+        renderPlayer(graphics, mouseX, mouseY);
+        TerminalScreenLayout.Rect area = variant.contentArea();
+        int clipLeft = leftPos + area.left();
+        int clipTop = topPos + area.top();
+        int clipRight = leftPos + area.right() + 1;
+        int clipBottom = topPos + area.bottom() + 1;
+        graphics.enableScissor(clipLeft, clipTop, clipRight, clipBottom);
+        drawRemoteSections(graphics, mouseX, mouseY);
+        graphics.disableScissor();
+
+        boolean enabled = view.maxScroll() > 0 && !view.sections().isEmpty();
+        ResourceLocation scroller = enabled ? SCROLLER_TEXTURE : SCROLLER_DISABLED_TEXTURE;
+        int travel = variant.scrollTrack().height() - 15;
+        int scrollerY = variant.scrollTrack().top();
+        if (enabled && view.maxScroll() > 0) {
+            scrollerY += (int) ((double) view.scrollOffset() / view.maxScroll() * travel);
+        }
+        graphics.blit(scroller, leftPos + variant.scrollTrack().left(), topPos + scrollerY,
+                0, 0, 12, 15, 12, 15);
+        renderStaticItems(graphics);
+        renderCrafting(graphics);
+        ResourceLocation cross = isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)
+                ? CROSS_HIGHLIGHTED_TEXTURE : CROSS_TEXTURE;
+        graphics.blit(cross, leftPos + variant.cross().x(), topPos + variant.cross().y(),
+                0, 0, TerminalScreenLayout.BUTTON_SIZE, TerminalScreenLayout.BUTTON_SIZE,
+                TerminalScreenLayout.BUTTON_SIZE, TerminalScreenLayout.BUTTON_SIZE);
+        boolean lockHovered = isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE,
+                mouseX, mouseY);
+        ResourceLocation lockTexture = view.locked()
+                ? (lockHovered ? LOCKED_HIGHLIGHTED_TEXTURE : LOCKED_TEXTURE)
+                : (lockHovered ? UNLOCKED_HIGHLIGHTED_TEXTURE : UNLOCKED_TEXTURE);
+        graphics.blit(lockTexture, leftPos + variant.lockButton().x(), topPos + variant.lockButton().y(),
+                TerminalScreenLayout.LOCK_BUTTON_SIZE, TerminalScreenLayout.LOCK_BUTTON_SIZE,
+                0, 0, 20, 20, 20, 20);
+    }
+
+    private void renderPlayer(GuiGraphics graphics, int mouseX, int mouseY) {
+        InventoryScreen.renderEntityInInventoryFollowsMouse(graphics,
+                leftPos + variant.playerPortrait().left(), topPos + variant.playerPortrait().top(),
+                leftPos + variant.playerPortrait().right(), topPos + variant.playerPortrait().bottom(),
+                30, 0.0625F, mouseX, mouseY, player);
+    }
+
+    private void drawRemoteSections(GuiGraphics graphics, int mouseX, int mouseY) {
+        TerminalScreenLayout.Rect area = variant.contentArea();
+        int cursor = area.top() + 2 - view.scrollOffset();
+        hoveredRemote = null;
+        hoveredUnavailableIcon = false;
+        hoveredNoticeDismiss = false;
+        for (ClientLayoutEntry entry : layoutEntries()) {
+            if (entry.notice() != null) {
+                int bottom = cursor + sectionHeight(entry.notice().slotCount()) - 4;
+                drawReplacementNotice(graphics, entry.notice(), area.left(), cursor, area.right(), bottom,
+                        mouseX, mouseY);
+                cursor = bottom + 4;
+                continue;
+            }
+            int index = entry.sectionIndex();
+            TerminalViewPayload.Section section = entry.section();
+            int rows = Math.max(1, (section.slotCount() + 8) / 9);
+            int top = cursor;
+            int slotY = top + 12;
+            int bottom = slotY + rows * SLOT_SIZE + 2;
+            boolean unavailable = section.connectionStatus() != ConnectionStatus.AVAILABLE;
+            drawDottedFrame(graphics, area.left(), top, area.right(), bottom,
+                    unavailable ? 0xFFFF9B45 : 0xFFD0D0D0);
+            graphics.drawString(font, section.label(), leftPos + area.left() + 4, topPos + top + 2,
+                    0xFFFFFFFF, false);
+            for (int slot = 0; slot < section.slotCount(); slot++) {
+                int x = area.left() + (slot % 9) * SLOT_SIZE;
+                int y = slotY + (slot / 9) * SLOT_SIZE;
+                graphics.blit(SLOT_TEXTURE, leftPos + x, topPos + y, 0, 0, 18, 18, 18, 18);
+                ItemStack stack = remotePreviewItems.getOrDefault(key(index, slot),
+                        remoteItems.getOrDefault(key(index, slot), ItemStack.EMPTY));
+                if (!stack.isEmpty()) {
+                    graphics.renderItem(stack, leftPos + x + TerminalScreenLayout.ITEM_OFFSET,
+                            topPos + y + TerminalScreenLayout.ITEM_OFFSET);
+                    renderItemDecorations(graphics, stack, leftPos + x + TerminalScreenLayout.ITEM_OFFSET,
+                            topPos + y + TerminalScreenLayout.ITEM_OFFSET);
+                }
+                if (isInside(area, mouseX, mouseY)
+                        && mouseX >= leftPos + x && mouseX < leftPos + x + 18
+                        && mouseY >= topPos + y && mouseY < topPos + y + 18) {
+                    hoveredRemote = new RemoteHit(index, slot, stack);
+                }
+            }
+            if (unavailable) {
+                drawUnavailable(graphics, section, area.left(), top, area.right(), bottom, mouseX, mouseY);
+            }
+            cursor = bottom + 4;
+        }
+        if (view.sections().isEmpty() && view.notices().isEmpty()) {
+            Component message = Component.translatable("screen.simplestoragemanager.no_inventories");
+            List<net.minecraft.util.FormattedCharSequence> lines = font.split(message, Math.max(1, area.width() - 12));
+            int lineHeight = font.lineHeight;
+            int firstY = area.top() + Math.max(0, (area.height() - lines.size() * lineHeight) / 2);
+            int centerX = leftPos + (area.left() + area.right()) / 2;
+            for (int i = 0; i < lines.size(); i++) {
+                graphics.drawCenteredString(font, lines.get(i), centerX, topPos + firstY + i * lineHeight, 0xFFD0D0D0);
+            }
+        }
+    }
+
+    private void drawUnavailable(GuiGraphics graphics, TerminalViewPayload.Section section,
+                                 int left, int top, int right, int bottom, int mouseX, int mouseY) {
+        int sectionWidth = right - left + 1;
+        int sectionHeight = bottom - top + 1;
+        int background = 0xE015120F;
+        graphics.fill(leftPos + left, topPos + top, leftPos + right + 1, topPos + bottom + 1, background);
+        graphics.enableScissor(leftPos + left, topPos + top, leftPos + right + 1, topPos + bottom + 1);
+        for (int stripe = -sectionHeight / 3; stripe < sectionWidth; stripe += 10) {
+            for (int y = top; y <= bottom; y += 3) {
+                int x = left + stripe + (y - top) / 3;
+                graphics.fill(leftPos + x, topPos + y, leftPos + x + 3,
+                        topPos + Math.min(y + 3, bottom + 1), 0xFFFF9B45);
+            }
+        }
+        graphics.disableScissor();
+
+        String key = switch (section.connectionStatus()) {
+            case BLOCK_REMOVED -> "screen.simplestoragemanager.connection_lost";
+            case CHUNK_UNLOADED -> "screen.simplestoragemanager.chunk_unloaded";
+            case DIMENSION_MISSING -> "screen.simplestoragemanager.dimension_missing";
+            case BASIC_UNAVAILABLE -> "screen.simplestoragemanager.connection_lost";
+            case AVAILABLE -> "screen.simplestoragemanager.connection_lost";
+        };
+        Component message = Component.translatable(key, section.coordinate());
+        int maxWidth = Math.max(1, right - left - 12);
+        List<net.minecraft.util.FormattedCharSequence> lines = font.split(message, maxWidth);
+        int lineHeight = 9;
+        int firstY = top + Math.max(0, ((bottom - top + 1) - lines.size() * lineHeight) / 2);
+        int textWidth = 0;
+        for (net.minecraft.util.FormattedCharSequence line : lines) {
+            textWidth = Math.max(textWidth, font.width(line));
+        }
+        int textLeft = left + (sectionWidth - Math.min(sectionWidth, textWidth + 8)) / 2;
+        int textRight = textLeft + Math.min(sectionWidth, textWidth + 8);
+        graphics.fill(leftPos + textLeft, topPos + firstY - 2, leftPos + textRight,
+                topPos + firstY + lines.size() * lineHeight + 1, background);
+        for (int i = 0; i < lines.size(); i++) {
+            graphics.drawCenteredString(font, lines.get(i), leftPos + (left + right) / 2,
+                    topPos + firstY + i * lineHeight, 0xFFFF9B45);
+        }
+        drawDottedFrame(graphics, left, top, right, bottom, 0xFFFF9B45);
+        int iconSize = TerminalScreenLayout.ALERT_ICON_SIZE;
+        int iconX = right - iconSize - 1;
+        int iconY = top + 1;
+        boolean hovered = isPointInside(new TerminalScreenLayout.Point(iconX, iconY), iconSize, mouseX, mouseY);
+        hoveredUnavailableIcon |= hovered;
+        ResourceLocation icon = hovered ? REPORT_HIGHLIGHTED_TEXTURE : REPORT_TEXTURE;
+        graphics.blit(icon, leftPos + iconX, topPos + iconY, iconSize, iconSize,
+                0, 0, 20, 20, 20, 20);
+    }
+
+    private void drawReplacementNotice(GuiGraphics graphics, TerminalViewPayload.Notice notice,
+                                       int left, int top, int right, int bottom, int mouseX, int mouseY) {
+        graphics.fill(leftPos + left + 2, topPos + top, leftPos + right,
+                topPos + bottom + 1, 0xE01B4D27);
+        drawDottedFrame(graphics, left, top, right, bottom, 0xFFB5FFBC);
+        Component message = Component.translatable("screen.simplestoragemanager.replacement_notice",
+                notice.pos().getX(), notice.pos().getY(), notice.pos().getZ());
+        int maxWidth = Math.max(1, right - left - 16);
+        List<net.minecraft.util.FormattedCharSequence> lines = font.split(message, maxWidth);
+        int lineHeight = 9;
+        int firstY = top + Math.max(0, ((bottom - top + 1) - lines.size() * lineHeight) / 2);
+        for (int i = 0; i < lines.size(); i++) {
+            graphics.drawCenteredString(font, lines.get(i), leftPos + (left + right) / 2,
+                    topPos + firstY + i * lineHeight, 0xFFB5FFBC);
+        }
+        int crossX = right - 9;
+        int crossY = top + 2;
+        boolean hovered = mouseX >= leftPos + crossX && mouseX < leftPos + crossX + 7
+                && mouseY >= topPos + crossY && mouseY < topPos + crossY + 7;
+        hoveredNoticeDismiss |= hovered;
+        ResourceLocation cross = hovered
+                ? CROSS_HIGHLIGHTED_TEXTURE : CROSS_TEXTURE;
+        graphics.blit(cross, leftPos + crossX, topPos + crossY, 7, 7,
+                0, 0, 14, 14, 14, 14);
+    }
+
+    private void renderStaticItems(GuiGraphics graphics) {
+        for (int i = 0; i < 4; i++) renderSlotItem(graphics, menu.slots.get(menu.armorStart + i), variant.armor()[i]);
+        renderSlotItem(graphics, menu.slots.get(menu.offhandIndex), variant.offhand());
+        renderSlotItem(graphics, menu.slots.get(menu.upgradeStart), variant.upgrade3());
+        renderSlotItem(graphics, menu.slots.get(menu.upgradeStart + 1), variant.upgrade2());
+        renderSlotItem(graphics, menu.slots.get(menu.upgradeStart + 2), variant.upgrade1());
+        for (int row = 0; row < 3; row++) for (int column = 0; column < 9; column++) {
+            renderSlotItem(graphics, menu.slots.get(menu.mainInventoryStart + row * 9 + column),
+                    new TerminalScreenLayout.Point(variant.inventoryOrigin().x() + column * 18,
+                            variant.inventoryOrigin().y() + row * 18));
+        }
+        for (int column = 0; column < 9; column++) {
+            renderSlotItem(graphics, menu.slots.get(menu.hotbarStart + column),
+                    new TerminalScreenLayout.Point(variant.hotbarOrigin().x() + column * 18, variant.hotbarOrigin().y()));
+        }
+    }
+
+    private void renderCrafting(GuiGraphics graphics) {
+        for (int row = 0; row < 3; row++) {
+            for (int column = 0; column < 3; column++) {
+                renderSlotItem(graphics, menu.slots.get(menu.craftingGridStart + row * 3 + column),
+                        new TerminalScreenLayout.Point(variant.craftOrigin().x() + column * SLOT_SIZE,
+                                variant.craftOrigin().y() + row * SLOT_SIZE));
+            }
+        }
+        renderSlotItem(graphics, menu.slots.get(menu.craftingResultIndex), variant.result());
+    }
+
+    private void renderSlotItem(GuiGraphics graphics, Slot slot, TerminalScreenLayout.Point point) {
+        ItemStack stack = playerPreviewItems.getOrDefault(slot.index, slot.getItem());
+        if (stack.isEmpty()) return;
+        graphics.renderItem(stack, leftPos + point.x() + 1, topPos + point.y() + 1);
+        renderItemDecorations(graphics, stack, leftPos + point.x() + 1, topPos + point.y() + 1);
+    }
+
+    private void renderItemDecorations(GuiGraphics graphics, ItemStack stack, int x, int y) {
+        if (stack.getCount() <= 999) {
+            graphics.renderItemDecorations(font, stack, x, y);
+            return;
+        }
+        graphics.pose().pushPose();
+        graphics.pose().translate(x + 19, y + 9, 0);
+        graphics.pose().scale(0.65F, 0.65F, 1.0F);
+        graphics.renderItemDecorations(font, stack, -19, -9);
+        graphics.pose().popPose();
+    }
+
+    private void drawDottedFrame(GuiGraphics graphics, int left, int top, int right, int bottom, int color) {
+        for (int x = left; x <= right; x += 4) {
+            graphics.fill(leftPos + x, topPos + top, leftPos + Math.min(x + 2, right + 1), topPos + top + 1, color);
+            graphics.fill(leftPos + x, topPos + bottom, leftPos + Math.min(x + 2, right + 1), topPos + bottom + 1, color);
+        }
+        for (int y = top; y <= bottom; y += 4) {
+            graphics.fill(leftPos + left, topPos + y, leftPos + left + 1, topPos + Math.min(y + 2, bottom + 1), color);
+            graphics.fill(leftPos + right, topPos + y, leftPos + right + 1, topPos + Math.min(y + 2, bottom + 1), color);
+        }
+    }
+
+    @Override
+    protected void renderLabels(GuiGraphics graphics, int mouseX, int mouseY) {
+        graphics.drawString(font, title, titleLabelX, titleLabelY, 0x404040, false);
+    }
+
+    // Slot tooltips are rendered by this screen because BIG relocates static slots.
+    @Override
+    protected void renderTooltip(GuiGraphics graphics, int mouseX, int mouseY) {
+    }
+
+    @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        ItemStack carried = menu.getCarried();
+        if (remotePreviewCarried != null) menu.setCarried(remotePreviewCarried.copy());
+        super.render(graphics, mouseX, mouseY, partialTick);
+        if (remotePreviewCarried != null) menu.setCarried(carried);
+        if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
+            graphics.renderTooltip(font, Component.translatable("gui.simplestoragemanager.storage_manager_gui.clear_crafting"),
+                    mouseX, mouseY);
+        } else if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
+            List<net.minecraft.util.FormattedCharSequence> lines = new ArrayList<>();
+            String stateKey = view.locked() ? "screen.simplestoragemanager.inventory_lock.disable"
+                    : "screen.simplestoragemanager.inventory_lock.enable";
+            lines.addAll(font.split(Component.translatable(stateKey).withStyle(ChatFormatting.WHITE), 180));
+            if (hasShiftDown()) {
+                String descriptionKey = view.locked() ? "screen.simplestoragemanager.inventory_lock.disabled_description"
+                        : "screen.simplestoragemanager.inventory_lock.enabled_description";
+                lines.addAll(font.split(Component.translatable(descriptionKey).withStyle(ChatFormatting.GRAY), 180));
+            } else {
+                lines.addAll(font.split(Component.translatable("screen.simplestoragemanager.inventory_lock.shift_hint")
+                        .withStyle(ChatFormatting.GRAY), 180));
+            }
+            graphics.renderTooltip(font, lines, mouseX, mouseY);
+        } else if (hoveredNoticeDismiss) {
+            graphics.renderTooltip(font, Component.translatable("screen.simplestoragemanager.dismiss_notice"),
+                    mouseX, mouseY);
+        } else if (hoveredUnavailableIcon) {
+            List<net.minecraft.util.FormattedCharSequence> lines = font.split(
+                    Component.translatable("screen.simplestoragemanager.unavailable_tooltip"), 180);
+            graphics.renderTooltip(font, lines, mouseX, mouseY);
+        } else if (hoveredRemote != null && !hoveredRemote.stack().isEmpty()) {
+            graphics.renderTooltip(font, hoveredRemote.stack(), mouseX, mouseY);
+        } else {
+            Slot hoveredSlot = staticSlotAt(mouseX, mouseY);
+            if (hoveredSlot != null && !hoveredSlot.getItem().isEmpty()) {
+                graphics.renderTooltip(font, hoveredSlot.getItem(), mouseX, mouseY);
+            }
+        }
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (pendingOperationSequence > 0 && button == 0 && hasShiftDown()) return true;
+        if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
+            if (button == 0) PacketDistributor.sendToServer(new TerminalLockTogglePayload());
+            return true;
+        }
+        if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
+            PacketDistributor.sendToServer(new TerminalClearCraftingPayload());
+            return true;
+        }
+        if (clickNotice(mouseX, mouseY)) return true;
+        if (isInside(variant.searchArea(), mouseX, mouseY)) return super.mouseClicked(mouseX, mouseY, button);
+        RemoteHit remoteHit = remoteHitAt(mouseX, mouseY);
+        if (remoteHit != null) {
+            if (!view.canMutateInventories()) return true;
+            if (isCreativePickButton(button)) {
+                if (!menu.getCarried().isEmpty()) {
+                    beginRemoteDrag(remoteHit, button, false, true);
+                    return true;
+                }
+                if (!remoteHit.stack().isEmpty()) {
+                    PacketDistributor.sendToServer(new TerminalStorageClickPayload(remoteHit.section(),
+                            remoteHit.slot(), 2, false));
+                }
+                return true;
+            }
+            if (button != 0 && button != 1) return true;
+            int remoteButton = button == 1 ? 1 : 0;
+            boolean shiftRemoval = button == 0 && hasShiftDown() && menu.getCarried().isEmpty();
+            if (shiftRemoval || (!hasShiftDown() && !menu.getCarried().isEmpty())
+                    || (button == 0 && !menu.getCarried().isEmpty())) {
+                beginRemoteDrag(remoteHit, button, shiftRemoval, false);
+                return true;
+            }
+            PacketDistributor.sendToServer(new TerminalStorageClickPayload(remoteHit.section(), remoteHit.slot(),
+                    remoteButton, shiftRemoval));
+            return true;
+        }
+        Slot staticSlot = staticSlotAt(mouseX, mouseY);
+        if (staticSlot != null) {
+            if (menu.isTerminalSlot(staticSlot.index)) return true;
+            if (isCreativePickButton(button)) {
+                if (menu.getCarried().isEmpty()) {
+                    if (staticSlot.index < menu.upgradeStart || staticSlot.index >= menu.upgradeStart + 3
+                            && staticSlot.index != menu.craftingResultIndex) {
+                        minecraft.gameMode.handleInventoryMouseClick(menu.containerId, staticSlot.index, button,
+                                net.minecraft.world.inventory.ClickType.CLONE, player);
+                    }
+                } else if (menu.canDragTo(staticSlot)) {
+                    beginStaticDrag(staticSlot, button, false, true);
+                }
+                return true;
+            }
+            if (button != 0 && button != 1) return true;
+            if (button == 0 && hasShiftDown() && menu.getCarried().isEmpty()) {
+                if (!view.canMutateInventories()) return true;
+                beginStaticDrag(staticSlot, button, true, false);
+                return true;
+            }
+            if (!hasShiftDown() && !menu.getCarried().isEmpty() && menu.canDragTo(staticSlot)) {
+                beginStaticDrag(staticSlot, button, false, false);
+                return true;
+            }
+            minecraft.gameMode.handleInventoryMouseClick(menu.containerId, staticSlot.index,
+                    button == 1 ? 1 : 0,
+                    hasShiftDown() && button == 0 ? net.minecraft.world.inventory.ClickType.QUICK_MOVE
+                            : net.minecraft.world.inventory.ClickType.PICKUP,
+                    player);
+            return true;
+        }
+        if (isInside(variant.scrollTrack(), mouseX, mouseY)) {
+            draggingScroller = view.maxScroll() > 0;
+            updateScroll(mouseY);
+            return true;
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    private boolean isCreativePickButton(int button) {
+        return player.getAbilities().instabuild
+                && minecraft.options.keyPickItem.isActiveAndMatches(InputConstants.Type.MOUSE.getOrCreate(button));
+    }
+
+    private void beginRemoteDrag(RemoteHit hit, int button, boolean shift, boolean creative) {
+        itemDragButton = button;
+        itemDragShift = shift;
+        itemDragCreative = creative;
+        itemDragMoved = false;
+        itemDragStartSlot = -1;
+        itemDragSlots.clear();
+        remoteDragMode = creative ? 2 : button == 1 ? 1 : 0;
+        remoteDragShift = shift;
+        remoteDragInitialCarried = menu.getCarried().copy();
+        remoteDragTargets.clear();
+        addRemoteDragTarget(hit);
+        updateCombinedPreview();
+    }
+
+    private void beginStaticDrag(Slot slot, int button, boolean shift, boolean creative) {
+        itemDragButton = button;
+        itemDragShift = shift;
+        itemDragCreative = creative;
+        itemDragMoved = false;
+        itemDragStartSlot = slot.index;
+        itemDragSlots.clear();
+        itemDragSlots.add(slot.index);
+        remoteDragMode = creative ? 2 : button == 1 ? 1 : 0;
+        remoteDragShift = shift;
+        remoteDragInitialCarried = menu.getCarried().copy();
+        remoteDragTargets.clear();
+        updateCombinedPreview();
+    }
+
+    private void addStaticDragTarget(Slot slot) {
+        if (itemDragShift && itemDragStartSlot < 0) return;
+        if (slot == null || itemDragSlots.size() >= 256 || !itemDragSlots.add(slot.index)) return;
+        if (itemDragSlots.size() > 1 || !remoteDragTargets.isEmpty()) itemDragMoved = true;
+        updateCombinedPreview();
+        finishDragWhenCarriedIsEmpty();
+    }
+
+    private void updateCombinedPreview() {
+        if (!itemDragSlots.isEmpty()) updateStaticPreview();
+        else remotePreviewCarried = remoteDragInitialCarried.copy();
+        if (!remoteDragTargets.isEmpty()) updateRemotePreview();
+    }
+
+    private void updateStaticPreview() {
+        playerPreviewItems.clear();
+        ItemStack remaining = menu.getCarried().copy();
+        if (itemDragShift || remaining.isEmpty()) {
+            if (itemDragShift) updateShiftPreview();
+            remotePreviewCarried = remaining;
+            return;
+        }
+        Map<Integer, ItemStack> working = new HashMap<>();
+        List<Integer> eligible = new ArrayList<>();
+        for (int index : itemDragSlots) {
+            Slot slot = menu.slots.get(index);
+            ItemStack existing = slot.getItem().copy();
+            if (!menu.canDragTo(slot) || !slot.mayPlace(remaining)
+                    || !existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, remaining)) continue;
+            if (!itemDragCreative && remaining.getCount() <= eligible.size()) continue;
+            int limit = Math.min(remaining.getMaxStackSize(), slot.getMaxStackSize(remaining));
+            if (limit > (existing.isEmpty() ? 0 : existing.getCount())) {
+                eligible.add(index);
+                working.put(index, existing);
+            }
+        }
+        if (itemDragCreative) {
+            if (player.getAbilities().instabuild) {
+                for (int index : eligible) {
+                    Slot slot = menu.slots.get(index);
+                    int count = Math.min(remaining.getCount(), slot.getMaxStackSize(remaining));
+                    ItemStack existing = working.get(index);
+                    working.put(index, existing.isEmpty() ? remaining.copyWithCount(count)
+                            : existing.copyWithCount(Math.max(existing.getCount(), count)));
+                }
+            }
+        } else {
+            int amount = itemDragButton == 1 ? 1 : eligible.isEmpty() ? 0 : remaining.getCount() / eligible.size();
+            for (int index : eligible) {
+                if (remaining.isEmpty() || amount <= 0) break;
+                Slot slot = menu.slots.get(index);
+                ItemStack existing = working.get(index);
+                int currentCount = existing.isEmpty() ? 0 : existing.getCount();
+                int limit = Math.min(remaining.getMaxStackSize(), slot.getMaxStackSize(remaining));
+                int inserted = Math.min(amount, limit - currentCount);
+                if (inserted <= 0) continue;
+                working.put(index, existing.isEmpty() ? remaining.copyWithCount(inserted)
+                        : existing.copyWithCount(currentCount + inserted));
+                remaining.shrink(inserted);
+            }
+        }
+        playerPreviewItems.putAll(working);
+        remotePreviewCarried = itemDragCreative ? remoteDragInitialCarried.copy() : remaining;
+    }
+
+    private void updateShiftPreview() {
+        playerPreviewItems.clear();
+        remotePreviewItems.clear();
+        for (int index = menu.mainInventoryStart; index < menu.hotbarStart + 9; index++) {
+            playerPreviewItems.put(index, menu.slots.get(index).getItem().copy());
+        }
+        for (int index : itemDragSlots) {
+            if (index < 0 || index >= menu.slots.size() || index == menu.craftingResultIndex
+                    || menu.isTerminalSlot(index)) continue;
+            playerPreviewItems.putIfAbsent(index, menu.slots.get(index).getItem().copy());
+        }
+        List<Integer> originCounts = view.originTargets().stream()
+                .map(TerminalViewPayload.OriginTarget::count).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        List<ShiftDragPreviewDestination> selectedDestinations = new ArrayList<>();
+        for (int index : itemDragSlots) {
+            if (index == menu.craftingResultIndex || menu.isTerminalSlot(index)) continue;
+            ItemStack moving = playerPreviewItems.getOrDefault(index,
+                    menu.slots.get(index).getItem()).copy();
+            if (moving.isEmpty()) continue;
+            if (view.locked()) insertPreviewIntoOrigins(moving, originCounts);
+            insertPreviewShiftDragRemainder(moving, selectedDestinations);
+            playerPreviewItems.put(index, moving);
+        }
+    }
+
+    private void insertPreviewShiftDragRemainder(ItemStack moving,
+                                                 List<ShiftDragPreviewDestination> selectedDestinations) {
+        if (moving.isEmpty()) return;
+        for (ShiftDragPreviewDestination selected : selectedDestinations) {
+            if (ItemStack.isSameItemSameComponents(selected.item(), moving)) {
+                insertPreviewShiftDragAt(moving, selected.slotKey());
+                return;
+            }
+        }
+
+        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT; pass++) {
+            for (int sectionIndex = 0; sectionIndex < view.sections().size(); sectionIndex++) {
+                TerminalViewPayload.Section section = view.sections().get(sectionIndex);
+                if (section.connectionStatus() != ConnectionStatus.AVAILABLE) continue;
+                for (int slot = 0; slot < section.slotCount(); slot++) {
+                    long slotKey = key(sectionIndex, slot);
+                    ItemStack present = remotePreviewItems.getOrDefault(slotKey,
+                            remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
+                    if (!acceptsInsertionSlot(present, moving, pass)) continue;
+                    int amount = Math.min(moving.getCount(),
+                            insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving)));
+                    if (amount <= 0) continue;
+                    remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
+                            : present.copyWithCount(present.getCount() + amount));
+                    moving.shrink(amount);
+                    selectedDestinations.add(new ShiftDragPreviewDestination(slotKey,
+                            remotePreviewItems.get(slotKey)));
+                    return;
+                }
+            }
+        }
+    }
+
+    private void insertPreviewShiftDragAt(ItemStack moving, long slotKey) {
+        ItemStack present = remotePreviewItems.getOrDefault(slotKey,
+                remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
+        if (!ItemStack.isSameItemSameComponents(present, moving)) return;
+        int amount = Math.min(moving.getCount(),
+                insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving)));
+        if (amount <= 0) return;
+        remotePreviewItems.put(slotKey, present.copyWithCount(present.getCount() + amount));
+        moving.shrink(amount);
+    }
+
+    private void insertPreviewIntoRemote(ItemStack moving) {
+        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && !moving.isEmpty(); pass++) {
+            insertPreviewIntoRemote(moving, pass);
+        }
+    }
+
+    private void insertPreviewIntoRemote(ItemStack moving, int pass) {
+        for (int sectionIndex = 0; sectionIndex < view.sections().size() && !moving.isEmpty(); sectionIndex++) {
+            TerminalViewPayload.Section section = view.sections().get(sectionIndex);
+            if (section.connectionStatus() != ConnectionStatus.AVAILABLE) continue;
+            for (int slot = 0; slot < section.slotCount() && !moving.isEmpty(); slot++) {
+                long slotKey = key(sectionIndex, slot);
+                ItemStack present = remotePreviewItems.getOrDefault(slotKey,
+                        remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
+                if (!acceptsInsertionSlot(present, moving, pass)) continue;
+                int currentCount = present.isEmpty() ? 0 : present.getCount();
+                int amount = Math.min(moving.getCount(),
+                        insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving)));
+                if (amount <= 0) continue;
+                remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
+                        : present.copyWithCount(currentCount + amount));
+                moving.shrink(amount);
+            }
+        }
+    }
+
+    private void insertPreviewIntoOrigins(ItemStack moving, List<Integer> remainingCounts) {
+        List<TerminalViewPayload.OriginTarget> origins = view.originTargets();
+        for (int index = 0; index < origins.size() && !moving.isEmpty(); index++) {
+            TerminalViewPayload.OriginTarget origin = origins.get(index);
+            int requested = Math.min(moving.getCount(), remainingCounts.get(index));
+            if (requested <= 0 || !ItemStack.isSameItemSameComponents(origin.item(), moving)) continue;
+            if (origin.section() < 0 || origin.section() >= view.sections().size()
+                    || view.sections().get(origin.section()).connectionStatus() != ConnectionStatus.AVAILABLE) {
+                remainingCounts.set(index, 0);
+                return;
+            }
+            int inserted = insertPreviewIntoOrigin(moving, origin, requested);
+            moving.shrink(inserted);
+            remainingCounts.set(index, inserted < requested ? 0 : remainingCounts.get(index) - inserted);
+            if (inserted < requested) return;
+        }
+    }
+
+    private static boolean acceptsInsertionSlot(ItemStack existing, ItemStack incoming, int pass) {
+        boolean empty = existing.isEmpty();
+        boolean matches = !empty && ItemStack.isSameItemSameComponents(existing, incoming);
+        return TerminalInsertionRules.acceptsSlot(empty, matches, pass);
+    }
+
+    private static int insertionCapacity(ItemStack incoming, ItemStack existing, int slotLimit) {
+        return TerminalInsertionRules.capacity(incoming.getMaxStackSize(),
+                existing.isEmpty() ? 0 : existing.getCount(), slotLimit);
+    }
+
+    private int insertPreviewIntoOrigin(ItemStack moving, TerminalViewPayload.OriginTarget origin, int requested) {
+        int sectionIndex = origin.section();
+        if (sectionIndex < 0 || sectionIndex >= view.sections().size()
+                || view.sections().get(sectionIndex).connectionStatus() != ConnectionStatus.AVAILABLE) return 0;
+        TerminalViewPayload.Section section = view.sections().get(sectionIndex);
+        int inserted = 0;
+        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && inserted < requested; pass++) {
+            for (int slot = 0; slot < section.slotCount() && inserted < requested; slot++) {
+                long slotKey = key(sectionIndex, slot);
+                ItemStack present = remotePreviewItems.getOrDefault(slotKey,
+                        remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
+                if (!acceptsInsertionSlot(present, moving, pass)) continue;
+                int capacity = insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving));
+                int amount = Math.min(requested - inserted, Math.min(moving.getCount() - inserted, capacity));
+                if (amount <= 0) continue;
+                remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
+                        : present.copyWithCount(present.getCount() + amount));
+                inserted += amount;
+            }
+        }
+        return inserted;
+    }
+
+    private void finishItemDrag() {
+        boolean shiftOperation = itemDragShift
+                && (!itemDragSlots.isEmpty() || !remoteDragTargets.isEmpty());
+        if (shiftOperation && pendingOperationSequence == 0) {
+            pendingOperationSequence = ++nextOperationSequence;
+        }
+        if (!itemDragSlots.isEmpty() && itemDragShift) {
+            PacketDistributor.sendToServer(new TerminalStorageClickPayload(-1, -1, 0, true,
+                    List.of(), List.copyOf(itemDragSlots), pendingOperationSequence));
+        } else if (!itemDragSlots.isEmpty() && !itemDragCreative && itemDragMoved) {
+            int type = remoteDragMode;
+            minecraft.gameMode.handleInventoryMouseClick(menu.containerId, -999,
+                    net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(0, type),
+                    net.minecraft.world.inventory.ClickType.QUICK_CRAFT, player);
+            for (int slotIndex : itemDragSlots) {
+                minecraft.gameMode.handleInventoryMouseClick(menu.containerId, slotIndex,
+                        net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(1, type),
+                        net.minecraft.world.inventory.ClickType.QUICK_CRAFT, player);
+            }
+            minecraft.gameMode.handleInventoryMouseClick(menu.containerId, -999,
+                    net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(2, type),
+                    net.minecraft.world.inventory.ClickType.QUICK_CRAFT, player);
+        } else if (!itemDragSlots.isEmpty() && !itemDragMoved && itemDragStartSlot >= 0) {
+            minecraft.gameMode.handleInventoryMouseClick(menu.containerId, itemDragStartSlot,
+                    itemDragCreative ? itemDragButton : itemDragButton == 1 ? 1 : 0,
+                    itemDragShift ? net.minecraft.world.inventory.ClickType.QUICK_MOVE
+                            : itemDragCreative ? net.minecraft.world.inventory.ClickType.CLONE
+                            : net.minecraft.world.inventory.ClickType.PICKUP,
+                    player);
+        }
+        boolean hasRemoteTargets = !remoteDragTargets.isEmpty();
+        if (itemDragCreative && (hasRemoteTargets || !itemDragSlots.isEmpty())) {
+            if (itemDragMoved) {
+                TerminalStorageClickPayload.SlotTarget first = hasRemoteTargets
+                        ? remoteDragTargets.get(0) : new TerminalStorageClickPayload.SlotTarget(-1, -1);
+                PacketDistributor.sendToServer(new TerminalStorageClickPayload(first.section(), first.slot(), 2,
+                        false, List.copyOf(remoteDragTargets), List.copyOf(itemDragSlots)));
+            }
+        } else if (hasRemoteTargets) {
+            TerminalStorageClickPayload.SlotTarget first = remoteDragTargets.get(0);
+            boolean sendBatch = itemDragMoved || remoteDragShift;
+            PacketDistributor.sendToServer(sendBatch
+                    ? new TerminalStorageClickPayload(first.section(), first.slot(), remoteDragMode,
+                            remoteDragShift, List.copyOf(remoteDragTargets), List.of(),
+                            remoteDragShift ? pendingOperationSequence : 0)
+                    : new TerminalStorageClickPayload(first.section(), first.slot(), remoteDragMode, false));
+        }
+        itemDragButton = -1;
+        itemDragShift = false;
+        itemDragMoved = false;
+        itemDragCreative = false;
+        itemDragStartSlot = -1;
+        itemDragSlots.clear();
+        remoteDragMode = 0;
+        remoteDragShift = false;
+        remoteDragTargets.clear();
+        remoteDragInitialCarried = ItemStack.EMPTY;
+        if (!hasRemoteTargets && !shiftOperation) clearRemotePreview();
+    }
+
+    private void addRemoteDragTarget(RemoteHit hit) {
+        if (itemDragShift && itemDragStartSlot >= 0) return;
+        if (hit == null || remoteDragTargets.size() >= 256) return;
+        TerminalStorageClickPayload.SlotTarget target =
+                new TerminalStorageClickPayload.SlotTarget(hit.section(), hit.slot());
+        if (!remoteDragTargets.contains(target)) {
+            if (!remoteDragTargets.isEmpty() || !itemDragSlots.isEmpty()) itemDragMoved = true;
+            remoteDragTargets.add(target);
+            updateCombinedPreview();
+            finishDragWhenCarriedIsEmpty();
+        }
+    }
+
+    private void finishDragWhenCarriedIsEmpty() {
+        if (!itemDragMoved || itemDragShift || itemDragCreative
+                || remotePreviewCarried == null || !remotePreviewCarried.isEmpty()) return;
+        if (itemDragButton == 1 || itemDragButton == 0
+                && eligibleDragSlotCount() >= remoteDragInitialCarried.getCount()) finishItemDrag();
+    }
+
+    private int eligibleDragSlotCount() {
+        int eligible = 0;
+        ItemStack carried = remoteDragInitialCarried;
+        for (int index : itemDragSlots) {
+            Slot slot = menu.slots.get(index);
+            ItemStack existing = slot.getItem();
+            if (menu.canDragTo(slot) && slot.mayPlace(carried)
+                    && (existing.isEmpty() || ItemStack.isSameItemSameComponents(existing, carried))
+                    && slot.getMaxStackSize(carried) > (existing.isEmpty() ? 0 : existing.getCount())) {
+                eligible++;
+            }
+        }
+        for (TerminalStorageClickPayload.SlotTarget target : remoteDragTargets) {
+            long slotKey = key(target.section(), target.slot());
+            ItemStack existing = remoteItems.getOrDefault(slotKey, ItemStack.EMPTY);
+            if ((existing.isEmpty() || ItemStack.isSameItemSameComponents(existing, carried))
+                    && remoteSlotLimit(slotKey, carried) > (existing.isEmpty() ? 0 : existing.getCount())) {
+                eligible++;
+            }
+        }
+        return eligible;
+    }
+
+    private void updateRemotePreview() {
+        remotePreviewItems.clear();
+        ItemStack remaining = itemDragSlots.isEmpty()
+                ? remoteDragInitialCarried.copy()
+                : remotePreviewCarried == null ? remoteDragInitialCarried.copy() : remotePreviewCarried.copy();
+        if (remoteDragShift) {
+            playerPreviewItems.clear();
+            for (int index = menu.mainInventoryStart; index < menu.hotbarStart + 9; index++) {
+                playerPreviewItems.put(index, menu.slots.get(index).getItem().copy());
+            }
+            for (TerminalStorageClickPayload.SlotTarget target : remoteDragTargets) {
+                long slotKey = key(target.section(), target.slot());
+                ItemStack source = remoteItems.getOrDefault(slotKey, ItemStack.EMPTY).copy();
+                if (source.isEmpty()) continue;
+                insertPreviewIntoPlayerInventory(source);
+                remotePreviewItems.put(slotKey, source);
+            }
+            remotePreviewCarried = ItemStack.EMPTY;
+            return;
+        }
+        List<TerminalStorageClickPayload.SlotTarget> eligible = new ArrayList<>();
+        Map<Long, ItemStack> working = new HashMap<>();
+        for (TerminalStorageClickPayload.SlotTarget target : remoteDragTargets) {
+            long slotKey = key(target.section(), target.slot());
+            ItemStack existing = remoteItems.getOrDefault(slotKey, ItemStack.EMPTY).copy();
+            if (!existing.isEmpty() && (remaining.isEmpty()
+                    || !ItemStack.isSameItemSameComponents(existing, remaining))) continue;
+            if (!remaining.isEmpty() && existing.getCount() >= remoteSlotLimit(slotKey, remaining)) continue;
+            eligible.add(target);
+            working.put(slotKey, existing);
+        }
+
+        if (remaining.isEmpty()) return;
+        if (remoteDragMode == 2 && player.getAbilities().instabuild) {
+            for (TerminalStorageClickPayload.SlotTarget target : eligible) {
+                long slotKey = key(target.section(), target.slot());
+                ItemStack existing = working.get(slotKey);
+                int limit = remoteSlotLimit(slotKey, remaining);
+                int count = Math.min(remaining.getCount(), limit);
+                if (count <= 0) continue;
+                if (existing.isEmpty()) {
+                    working.put(slotKey, remaining.copyWithCount(count));
+                } else {
+                    working.put(slotKey, existing.copyWithCount(Math.max(existing.getCount(), count)));
+                }
+            }
+        } else {
+            int amount = remoteDragMode == 1 ? 1 : eligible.isEmpty() ? 0 : remaining.getCount() / eligible.size();
+            for (TerminalStorageClickPayload.SlotTarget target : eligible) {
+                if (remaining.isEmpty() || amount <= 0) break;
+                long slotKey = key(target.section(), target.slot());
+                ItemStack existing = working.get(slotKey);
+                int currentCount = existing.isEmpty() ? 0 : existing.getCount();
+                int inserted = Math.min(amount, remoteSlotLimit(slotKey, remaining) - currentCount);
+                if (inserted <= 0) continue;
+                working.put(slotKey, existing.isEmpty() ? remaining.copyWithCount(inserted)
+                        : existing.copyWithCount(currentCount + inserted));
+                remaining.shrink(inserted);
+            }
+        }
+        remotePreviewItems.putAll(working);
+        remotePreviewCarried = remoteDragMode == 2 ? remoteDragInitialCarried.copy() : remaining;
+    }
+
+    private void insertPreviewIntoPlayerInventory(ItemStack moving) {
+        for (int pass = 0; pass < 2 && !moving.isEmpty(); pass++) {
+            for (int index = menu.mainInventoryStart; index < menu.hotbarStart + 9 && !moving.isEmpty(); index++) {
+                Slot slot = menu.slots.get(index);
+                if (menu.isTerminalSlot(index) || !slot.mayPlace(moving)) continue;
+                ItemStack current = playerPreviewItems.get(index);
+                if (pass == 0 && (current.isEmpty() || !ItemStack.isSameItemSameComponents(current, moving))) continue;
+                if (pass == 1 && !current.isEmpty()) continue;
+                int limit = Math.min(moving.getMaxStackSize(), slot.getMaxStackSize(moving));
+                int available = limit - (current.isEmpty() ? 0 : current.getCount());
+                int count = Math.min(moving.getCount(), available);
+                if (count <= 0) continue;
+                playerPreviewItems.put(index, current.isEmpty() ? moving.copyWithCount(count)
+                        : current.copyWithCount(current.getCount() + count));
+                moving.shrink(count);
+            }
+        }
+    }
+
+    private void clearRemotePreview() {
+        remotePreviewItems.clear();
+        playerPreviewItems.clear();
+        remotePreviewCarried = null;
+    }
+
+    private RemoteHit remoteHitAt(double mouseX, double mouseY) {
+        TerminalScreenLayout.Rect area = variant.contentArea();
+        if (!isInside(area, mouseX, mouseY)) return null;
+        double x = mouseX - leftPos;
+        double y = mouseY - topPos;
+        int cursor = area.top() + 2 - view.scrollOffset();
+        for (ClientLayoutEntry entry : layoutEntries()) {
+            if (entry.notice() != null) {
+                cursor += sectionHeight(entry.notice().slotCount());
+                continue;
+            }
+            TerminalViewPayload.Section section = entry.section();
+            int slotY = cursor + 12;
+            for (int slot = 0; slot < section.slotCount(); slot++) {
+                int slotX = area.left() + (slot % 9) * SLOT_SIZE;
+                int currentY = slotY + (slot / 9) * SLOT_SIZE;
+                if (x >= slotX && x < slotX + SLOT_SIZE && y >= currentY && y < currentY + SLOT_SIZE) {
+                    return new RemoteHit(entry.sectionIndex(), slot,
+                            remoteItems.getOrDefault(key(entry.sectionIndex(), slot), ItemStack.EMPTY));
+                }
+            }
+            cursor += sectionHeight(section.slotCount());
+        }
+        return null;
+    }
+
+    private boolean clickNotice(double mouseX, double mouseY) {
+        int cursor = variant.contentArea().top() + 2 - view.scrollOffset();
+        for (ClientLayoutEntry entry : layoutEntries()) {
+            if (entry.notice() != null) {
+                int bottom = cursor + sectionHeight(entry.notice().slotCount()) - 4;
+                int crossX = variant.contentArea().right() - 9;
+                int crossY = cursor + 2;
+                if (mouseX >= leftPos + crossX && mouseX < leftPos + crossX + 7
+                        && mouseY >= topPos + crossY && mouseY < topPos + crossY + 7) {
+                    TerminalViewPayload.Notice notice = entry.notice();
+                PacketDistributor.sendToServer(new TerminalNoticeDismissPayload(notice.dimension(), notice.pos()));
+                return true;
+                }
+                cursor = bottom + 4;
+                continue;
+            }
+            cursor += sectionHeight(entry.section().slotCount());
+        }
+        return false;
+    }
+
+    private Slot staticSlotAt(double mouseX, double mouseY) {
+        double x = mouseX - leftPos;
+        double y = mouseY - topPos;
+        if (pointHit(variant.result(), x, y)) return menu.slots.get(menu.craftingResultIndex);
+        for (int row = 0; row < 3; row++) {
+            for (int column = 0; column < 3; column++) {
+                TerminalScreenLayout.Point point = new TerminalScreenLayout.Point(
+                        variant.craftOrigin().x() + column * SLOT_SIZE,
+                        variant.craftOrigin().y() + row * SLOT_SIZE);
+                if (pointHit(point, x, y)) {
+                    return menu.slots.get(menu.craftingGridStart + row * 3 + column);
+                }
+            }
+        }
+        for (int i = 0; i < 4; i++) if (pointHit(variant.armor()[i], x, y)) return menu.slots.get(menu.armorStart + i);
+        if (pointHit(variant.offhand(), x, y)) return menu.slots.get(menu.offhandIndex);
+        if (pointHit(variant.upgrade3(), x, y)) return menu.slots.get(menu.upgradeStart);
+        if (pointHit(variant.upgrade2(), x, y)) return menu.slots.get(menu.upgradeStart + 1);
+        if (pointHit(variant.upgrade1(), x, y)) return menu.slots.get(menu.upgradeStart + 2);
+        for (int row = 0; row < 3; row++) for (int column = 0; column < 9; column++) {
+            TerminalScreenLayout.Point point = new TerminalScreenLayout.Point(variant.inventoryOrigin().x() + column * 18,
+                    variant.inventoryOrigin().y() + row * 18);
+            if (pointHit(point, x, y)) return menu.slots.get(menu.mainInventoryStart + row * 9 + column);
+        }
+        for (int column = 0; column < 9; column++) {
+            TerminalScreenLayout.Point point = new TerminalScreenLayout.Point(variant.hotbarOrigin().x() + column * 18,
+                    variant.hotbarOrigin().y());
+            if (pointHit(point, x, y)) return menu.slots.get(menu.hotbarStart + column);
+        }
+        return null;
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (itemDragButton >= 0 && button == itemDragButton) {
+            addStaticDragTarget(staticSlotAt(mouseX, mouseY));
+            if (itemDragButton < 0) return true;
+            addRemoteDragTarget(remoteHitAt(mouseX, mouseY));
+            return true;
+        }
+        if (draggingScroller) {
+            updateScroll(mouseY);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (itemDragButton >= 0 && button == itemDragButton) {
+            addStaticDragTarget(staticSlotAt(mouseX, mouseY));
+            if (itemDragButton < 0) return true;
+            addRemoteDragTarget(remoteHitAt(mouseX, mouseY));
+            if (itemDragButton < 0) return true;
+            finishItemDrag();
+            return true;
+        }
+        if (draggingScroller) {
+            draggingScroller = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    private void updateScroll(double mouseY) {
+        int travel = variant.scrollTrack().height() - 15;
+        if (travel <= 0 || view.maxScroll() <= 0) return;
+        int next = (int) (((mouseY - topPos - variant.scrollTrack().top() - 7.5D) / travel) * view.maxScroll());
+        next = Math.max(0, Math.min(view.maxScroll(), next));
+        requestView(next);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (isInside(variant.contentArea(), mouseX, mouseY) || isInside(variant.scrollTrack(), mouseX, mouseY)) {
+            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 12);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (searchBar != null && searchBar.isFocused()
+                && minecraft.options.keyInventory.matches(keyCode, scanCode)) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public void resize(Minecraft minecraft, int width, int height) {
+        String value = searchBar == null ? "" : searchBar.getValue();
+        super.resize(minecraft, width, height);
+        if (searchBar != null) searchBar.setValue(value);
+    }
+
+    @Override
+    public void updateMenuState(int elementType, String name, Object state) { }
+
+    private boolean isInside(TerminalScreenLayout.Rect rect, double mouseX, double mouseY) {
+        return mouseX >= leftPos + rect.left() && mouseX < leftPos + rect.right() + 1
+                && mouseY >= topPos + rect.top() && mouseY < topPos + rect.bottom() + 1;
+    }
+
+    private boolean pointHit(TerminalScreenLayout.Point point, double x, double y) {
+        return x >= point.x() && x < point.x() + 18 && y >= point.y() && y < point.y() + 18;
+    }
+
+    private boolean isPointInside(TerminalScreenLayout.Point point, int size, double mouseX, double mouseY) {
+        return mouseX >= leftPos + point.x() && mouseX < leftPos + point.x() + size
+                && mouseY >= topPos + point.y() && mouseY < topPos + point.y() + size;
+    }
+
+    private long key(int section, int slot) { return ((long) section << 32) | (slot & 0xFFFFFFFFL); }
+
+    private List<ClientLayoutEntry> layoutEntries() {
+        List<TerminalViewPayload.Notice> notices = new ArrayList<>(view.notices());
+        notices.sort(Comparator.comparingInt(TerminalViewPayload.Notice::sectionIndex));
+        List<ClientLayoutEntry> entries = new ArrayList<>();
+        int noticeIndex = 0;
+        for (int sectionIndex = 0; sectionIndex < view.sections().size(); sectionIndex++) {
+            while (noticeIndex < notices.size()
+                    && notices.get(noticeIndex).sectionIndex() <= sectionIndex) {
+                entries.add(ClientLayoutEntry.notice(notices.get(noticeIndex++)));
+            }
+            entries.add(ClientLayoutEntry.section(sectionIndex, view.sections().get(sectionIndex)));
+        }
+        while (noticeIndex < notices.size()) {
+            entries.add(ClientLayoutEntry.notice(notices.get(noticeIndex++)));
+        }
+        return entries;
+    }
+
+    private int sectionHeight(int slotCount) {
+        int rows = Math.max(1, (slotCount + 8) / 9);
+        return 12 + rows * SLOT_SIZE + 2 + 4;
+    }
+
+    private record RemoteHit(int section, int slot, ItemStack stack) { }
+    private record ShiftDragPreviewDestination(long slotKey, ItemStack item) { }
+
+    private record ClientLayoutEntry(int sectionIndex, TerminalViewPayload.Section section,
+                                     TerminalViewPayload.Notice notice) {
+        private static ClientLayoutEntry section(int index, TerminalViewPayload.Section section) {
+            return new ClientLayoutEntry(index, section, null);
+        }
+
+        private static ClientLayoutEntry notice(TerminalViewPayload.Notice notice) {
+            return new ClientLayoutEntry(-1, null, notice);
+        }
+    }
+}

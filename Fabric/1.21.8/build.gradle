@@ -1,0 +1,16 @@
+plugins {
+    id 'fabric-loom' version 'TODO'
+}
+
+version = 'TODO'
+group = 'net.interplay'
+base.archivesName = 'SimpleStorageManager'
+
+// TODO: Set the Java toolchain for the target Minecraft version.
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+    // TODO: Configure mappings using mappings_version and the chosen mapping provider.
+}

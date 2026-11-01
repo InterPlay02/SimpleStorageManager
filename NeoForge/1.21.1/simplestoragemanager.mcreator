@@ -1,0 +1,136 @@
+{
+    "mod_elements":  [
+                         {
+                             "name":  "StorageManager",
+                             "type":  "item",
+                             "compiles":  true,
+                             "locked_code":  false,
+                             "registry_name":  "storage_manager",
+                             "metadata":  {
+                                              "files":  [
+                                                            "src/main/java/net/interplay/simplestoragemanager/item/StorageManagerItem.java",
+                                                            "src/main/resources/assets/simplestoragemanager/models/item/storage_manager.json",
+                                                            "src/main/java/net/interplay/simplestoragemanager/item/inventory/StorageManagerInventoryCapability.java"
+                                                        ]
+                                          }
+                         },
+                         {
+                             "name":  "InfinityUpgrade",
+                             "type":  "item",
+                             "compiles":  true,
+                             "locked_code":  false,
+                             "registry_name":  "infinity_upgrade",
+                             "metadata":  {
+                                              "files":  [
+                                                            "src/main/java/net/interplay/simplestoragemanager/item/InfinityUpgradeItem.java",
+                                                            "src/main/resources/assets/simplestoragemanager/models/item/infinity_upgrade.json"
+                                                        ]
+                                          }
+                         },
+                         {
+                             "name":  "DimensionalInfinityUpgrade",
+                             "type":  "item",
+                             "compiles":  true,
+                             "locked_code":  false,
+                             "registry_name":  "dimensional_infinity_upgrade",
+                             "metadata":  {
+                                              "files":  [
+                                                            "src/main/resources/assets/simplestoragemanager/models/item/dimensional_infinity_upgrade.json",
+                                                            "src/main/java/net/interplay/simplestoragemanager/item/DimensionalInfinityUpgradeItem.java"
+                                                        ]
+                                          }
+                         },
+                         {
+                             "name":  "MultidimensionalInfinityUpgrade",
+                             "type":  "item",
+                             "compiles":  true,
+                             "locked_code":  false,
+                             "registry_name":  "multidimensional_infinity_upgrade",
+                             "metadata":  {
+                                              "files":  [
+                                                            "src/main/resources/assets/simplestoragemanager/models/item/multidimensional_infinity_upgrade.json",
+                                                            "src/main/java/net/interplay/simplestoragemanager/item/MultidimensionalInfinityUpgradeItem.java"
+                                                        ]
+                                          }
+                         },
+                         {
+                             "name":  "StorageManagerGUI",
+                             "type":  "gui",
+                             "compiles":  true,
+                             "locked_code":  false,
+                             "registry_name":  "storage_manager_gui",
+                             "metadata":  {
+                                              "files":  [
+                                                            "src/main/java/net/interplay/simplestoragemanager/client/gui/StorageManagerGUIScreen.java",
+                                                            "src/main/java/net/interplay/simplestoragemanager/world/inventory/StorageManagerGUIMenu.java"
+                                                        ]
+                                          }
+                         }
+                     ],
+    "variable_elements":  [
+
+                          ],
+    "sound_elements":  [
+
+                       ],
+    "tag_elements":  {
+
+                     },
+    "tab_element_order":  {
+
+                          },
+    "language_map":  {
+                         "en_us":  {
+                                       "item.simplestoragemanager.storage_manager":  "Storage Manager",
+                                       "item.simplestoragemanager.infinity_upgrade":  "Infinity Upgrade",
+                                       "item.simplestoragemanager.dimensional_infinity_upgrade":  "Dimensional Infinity Upgrade",
+                                       "item.simplestoragemanager.multidimensional_infinity_upgrade":  "Multidimensional Infinity Upgrade",
+                                       "gui.simplestoragemanager.storage_manager_gui.search_bar":  "",
+                                       "gui.simplestoragemanager.storage_manager_gui.label_terminal":  "Terminal"
+                                   }
+                     },
+    "metadata":  {
+                     "files":  [
+                                   "src/main/java/net/interplay/simplestoragemanager/network/MenuStateUpdateMessage.java",
+                                   "src/main/java/net/interplay/simplestoragemanager/init/SimplestoragemanagerModScreens.java",
+                                   "src/main/java/net/interplay/simplestoragemanager/init/SimplestoragemanagerModMenus.java",
+                                   "src/main/java/net/interplay/simplestoragemanager/init/SimplestoragemanagerModItems.java",
+                                   "src/main/java/net/interplay/simplestoragemanager/SimplestoragemanagerMod.java",
+                                   "src/main/java/net/interplay/simplestoragemanager/network/TerminalConnectionStatusPayload.java",
+                                   "src/main/resources/META-INF/neoforge.mods.toml",
+                                   "src/main/java/net/interplay/simplestoragemanager/init/SimplestoragemanagerModTabs.java",
+                                   "src/main/resources/META-INF/accesstransformer.cfg",
+                                   "src/main/resources/pack.mcmeta"
+                               ]
+                 },
+    "foldersRoot":  {
+                        "name":  "~",
+                        "children":  [
+
+                                     ]
+                    },
+    "workspaceSettings":  {
+                              "modid":  "simplestoragemanager",
+                              "modName":  "Simple Storage Manager",
+                              "version":  "0.3-alpha",
+                              "author":  "InterPlay",
+                              "websiteURL":  "",
+                              "license":  "Not specified",
+                              "serverSideOnly":  false,
+                              "requiredMods":  [
+
+                                               ],
+                              "dependencies":  [
+
+                                               ],
+                              "dependants":  [
+
+                                             ],
+                              "mcreatorDependencies":  [
+
+                                                       ],
+                              "currentGenerator":  "neoforge-1.21.1",
+                              "modElementsPackage":  "net.interplay.simplestoragemanager"
+                          },
+    "mcreatorVersion":  202600233518
+}

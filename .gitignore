@@ -1,0 +1,24 @@
+# Build e cache do Gradle (todas as versões)
+build/
+.gradle/
+**/build/
+**/.gradle/
+
+# Execução local (mundos e logs de teste)
+run/
+runs/
+*.log
+
+# IntelliJ e outras IDEs
+.idea/
+*.iml
+out/
+.vscode/
+
+# MCreator (histórico local e workspace interno)
+.mcreator/
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
