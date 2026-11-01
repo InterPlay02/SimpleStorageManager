@@ -28,10 +28,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.sounds.SoundSource;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.items.IItemHandler;
-import net.neoforged.neoforge.items.IItemHandlerModifiable;
-import net.neoforged.neoforge.items.wrapper.CombinedInvWrapper;
-import net.neoforged.neoforge.items.wrapper.InvWrapper;
-import net.neoforged.neoforge.items.wrapper.SidedInvWrapper;
 import net.interplay.simplestoragemanager.access.AccessRule;
 import net.interplay.simplestoragemanager.access.ConnectionStatus;
 import net.interplay.simplestoragemanager.access.InventoryAdapter;
@@ -170,6 +166,16 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     public ItemStack terminalStack() {
         ItemStack stack = entity.getItemInHand(hand);
         return stack.is(SimplestoragemanagerModItems.STORAGE_MANAGER.get()) ? stack : ItemStack.EMPTY;
+    }
+
+    public boolean isPlayerInventorySlot(int index) {
+        return index >= mainInventoryStart && index < hotbarStart + 9;
+    }
+
+    public boolean isOutsidePlayerInventorySlot(int index) {
+        return index >= upgradeStart && index < upgradeStart + 3
+                || index >= armorStart && index <= offhandIndex
+                || index >= craftingGridStart && index < craftingGridStart + 9;
     }
 
     public UUID terminalId() {
@@ -581,32 +587,38 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (id == null) return 0;
         List<TerminalConnection> currentConnections = TerminalSavedData.get(player.serverLevel()).connections(id);
         int inserted = 0;
+        List<TerminalConnection> visited = new ArrayList<>();
         for (TerminalOriginMemory.OriginRecord record : TerminalOriginMemory.records(player, id)) {
             if (stack.isEmpty() || inserted >= maximum) break;
             if (!ItemStack.isSameItemSameComponents(record.item(), stack)) continue;
+            if (visited.stream().anyMatch(connection -> sameOriginConnection(connection, record.connection()))) {
+                continue;
+            }
+            visited.add(record.connection());
+            List<TerminalOriginMemory.OriginRecord> originRecords = TerminalOriginMemory.records(player, id).stream()
+                    .filter(candidate -> ItemStack.isSameItemSameComponents(candidate.item(), stack)
+                            && sameOriginConnection(candidate.connection(), record.connection()))
+                    .toList();
             TerminalConnection current = currentConnections.stream()
                     .filter(connection -> sameOriginConnection(connection, record.connection()))
                     .findFirst().orElse(null);
             if (current == null) {
-                TerminalOriginMemory.discard(player, id, record.id());
-                return inserted;
+                discardOriginRecords(player, id, originRecords);
+                continue;
             }
             InventoryAdapter.Resolution resolution = verifyConnection(current, true);
             if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) {
-                TerminalOriginMemory.discard(player, id, record.id());
-                return inserted;
+                discardOriginRecords(player, id, originRecords);
+                continue;
             }
-            int requested = Math.min(Math.min(stack.getCount(), maximum - inserted), record.remaining());
+            int pending = originRecords.stream().mapToInt(TerminalOriginMemory.OriginRecord::remaining).sum();
+            int requested = Math.min(Math.min(stack.getCount(), maximum - inserted), pending);
             if (requested <= 0) continue;
             int moved = insertIntoOriginInventory(resolution.adapter().handler(), stack, requested);
             if (moved > 0) {
                 stack.shrink(moved);
                 inserted += moved;
-                TerminalOriginMemory.consume(player, id, record.id(), moved);
-            }
-            if (moved < requested) {
-                TerminalOriginMemory.discard(player, id, record.id());
-                return inserted;
+                consumeOriginRecords(player, id, originRecords, moved);
             }
         }
         return inserted;
@@ -620,26 +632,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
 
     private int insertIntoOriginInventory(IItemHandler handler, ItemStack stack, int requested) {
         if (stack.isEmpty() || requested <= 0) return 0;
-        int inserted = 0;
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && inserted < requested; pass++) {
-            for (int slot = 0; slot < handler.getSlots() && inserted < requested; slot++) {
-                ItemStack existing = handler.getStackInSlot(slot);
-                if (!acceptsInsertionSlot(existing, stack, pass)) continue;
-                if (!handler.isItemValid(slot, stack)) continue;
-                int offeredCount = Math.min(requested - inserted,
-                        insertionCapacity(stack, existing, handler.getSlotLimit(slot)));
-                if (offeredCount <= 0) continue;
-                ItemStack offered = stack.copyWithCount(offeredCount);
-                ItemStack simulated = handler.insertItem(slot, offered, true);
-                if (!simulated.isEmpty() && !ItemStack.isSameItemSameComponents(stack, simulated)) continue;
-                int accepted = Math.min(offeredCount, offeredCount - simulated.getCount());
-                if (accepted <= 0) continue;
-                ItemStack remainder = handler.insertItem(slot, offered.copyWithCount(accepted), false);
-                if (!remainder.isEmpty() && !ItemStack.isSameItemSameComponents(stack, remainder)) continue;
-                inserted += Math.max(0, Math.min(accepted, accepted - remainder.getCount()));
-            }
-        }
-        return inserted;
+        return insertIntoDestinations(stack, requested, destinationsFor(handler, 0, handler.getSlots()));
     }
 
     private List<String> selectedDimensions() {
@@ -879,14 +872,12 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
 
     // Shift-drag returns to remembered origins first, then uses one remote target per item type.
     private void handleMenuShiftDrag(ServerPlayer player, List<Integer> dragSlots) {
-        if (!canUseConnectedInventories(player, true)) return;
+        boolean canDepositPlayerItems = canUseConnectedInventories(player, true);
         UUID id = terminalId();
-        if (id == null) return;
-        List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
-        if (connections.isEmpty()) return;
-
-        List<RemoteDestination> destinations = displayedDestinations();
-        List<ShiftDragDestination> selectedDestinations = new ArrayList<>();
+        List<TerminalConnection> connections = id == null ? List.of()
+                : TerminalSavedData.get(player.serverLevel()).connections(id);
+        canDepositPlayerItems &= !connections.isEmpty();
+        List<RemoteDestination> destinations = canDepositPlayerItems ? displayedDestinations() : List.of();
         Set<Integer> seen = new HashSet<>();
         for (int index : dragSlots) {
             if (seen.size() >= 256 || !seen.add(index) || index < 0 || index >= slots.size()
@@ -897,15 +888,24 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 quickMoveCraftingResult(player);
                 continue;
             }
+            if (isOutsidePlayerInventorySlot(index)) {
+                quickMoveOutsideSlot(player, index);
+                continue;
+            }
+            if (!isPlayerInventorySlot(index) || !canDepositPlayerItems) continue;
 
             ItemStack moving = source.getItem().copy();
             ItemStack original = moving.copy();
-            insertIntoRememberedOrigins(moving, moving.getCount());
-            insertShiftDragRemainder(moving, destinations, selectedDestinations);
-            int inserted = original.getCount() - moving.getCount();
-            if (inserted <= 0) continue;
+            ItemStack itemType = moving.copyWithCount(1);
+            List<TerminalOriginMemory.OriginRecord> origins = matchingOriginRecords(player, id, moving);
+            boolean lockedWithoutOrigin = inventoryLockEnabled(player) && origins.isEmpty();
+            if (!lockedWithoutOrigin) insertIntoRememberedOrigins(moving, moving.getCount());
+            int inserted = insertIntoDestinations(moving, moving.getCount(), destinations, lockedWithoutOrigin);
+            consumeMatchingOriginRecords(player, id, itemType, inserted);
+            int transferred = original.getCount() - moving.getCount();
+            if (transferred <= 0) continue;
             source.set(moving);
-            source.onTake(player, original.copyWithCount(inserted));
+            source.onTake(player, original.copyWithCount(transferred));
         }
         player.getInventory().setChanged();
     }
@@ -930,34 +930,6 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return destinations;
     }
 
-    private void insertShiftDragRemainder(ItemStack stack, List<RemoteDestination> destinations,
-                                          List<ShiftDragDestination> selectedDestinations) {
-        if (stack.isEmpty()) return;
-        for (ShiftDragDestination selected : selectedDestinations) {
-            if (ItemStack.isSameItemSameComponents(selected.item(), stack)) {
-                insertRemoteSlot(selected.destination().handler(), selected.destination().slot(),
-                        stack, stack.getCount());
-                return;
-            }
-        }
-
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT; pass++) {
-            for (RemoteDestination destination : destinations) {
-                IItemHandler handler = destination.handler();
-                int slot = destination.slot();
-                ItemStack existing = handler.getStackInSlot(slot);
-                if (!acceptsInsertionSlot(existing, stack, pass) || !canAcceptRemoteSlot(handler, slot, stack)) {
-                    continue;
-                }
-                int inserted = insertRemoteSlot(handler, slot, stack, stack.getCount());
-                if (inserted > 0) {
-                    selectedDestinations.add(new ShiftDragDestination(destination, handler.getStackInSlot(slot)));
-                    return;
-                }
-            }
-        }
-    }
-
     // Apply origin-lock routing before the ordinary clicked-slot operation.
     private void clickRemote(InventoryAdapter adapter, int slot, int button) {
         ItemStack carried = getCarried();
@@ -971,22 +943,23 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                             .anyMatch(record -> sameOriginConnection(adapter.connection(), record.connection()));
                     if (sameOrigin) {
                         int inserted = clickRemoteAtSlot(adapter, slot, button);
-                        List<TerminalOriginMemory.OriginRecord> prioritizedOrigins = new ArrayList<>(matchingOrigins);
-                        prioritizedOrigins.sort((first, second) -> Boolean.compare(
-                                !sameOriginConnection(adapter.connection(), first.connection()),
-                                !sameOriginConnection(adapter.connection(), second.connection())));
-                        consumeOriginRecords(player, id, prioritizedOrigins, inserted);
+                        consumeOriginRecords(player, id, matchingOrigins, inserted);
                         return;
                     }
 
-                    int returnedToOrigin = insertIntoFirstEmptyOrigins(player, id, carried,
-                            button == 1 ? 1 : carried.getCount(), matchingOrigins);
-                    if (returnedToOrigin > 0) {
+                    ItemStack itemType = carried.copyWithCount(1);
+                    int returnedToOrigin = insertIntoRememberedOrigins(
+                            carried, button == 1 ? 1 : carried.getCount());
+                    if (button == 1 && returnedToOrigin > 0) {
+                        setCarried(carried);
+                        return;
+                    }
+                    if (carried.isEmpty()) {
                         setCarried(carried);
                         return;
                     }
                     int inserted = clickRemoteAtSlot(adapter, slot, button);
-                    consumeOriginRecords(player, id, matchingOrigins, inserted);
+                    consumeMatchingOriginRecords(player, id, itemType, inserted);
                     return;
                 }
             }
@@ -1013,40 +986,9 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         }
     }
 
-    private int insertIntoFirstEmptyOrigins(ServerPlayer player, UUID id, ItemStack stack, int maximum,
-                                            List<TerminalOriginMemory.OriginRecord> records) {
-        List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
-        List<TerminalConnection> visited = new ArrayList<>();
-        int inserted = 0;
-        for (TerminalOriginMemory.OriginRecord record : records) {
-            if (stack.isEmpty() || inserted >= maximum) break;
-            if (visited.stream().anyMatch(connection -> sameOriginConnection(connection, record.connection()))) continue;
-            visited.add(record.connection());
-            List<TerminalOriginMemory.OriginRecord> originRecords = records.stream()
-                    .filter(candidate -> sameOriginConnection(candidate.connection(), record.connection()))
-                    .toList();
-            int pending = originRecords.stream().mapToInt(TerminalOriginMemory.OriginRecord::remaining).sum();
-            TerminalConnection current = connections.stream()
-                    .filter(connection -> sameOriginConnection(connection, record.connection()))
-                    .findFirst().orElse(null);
-            if (current == null) {
-                discardOriginRecords(player, id, originRecords);
-                continue;
-            }
-            InventoryAdapter.Resolution resolution = verifyConnection(current, true);
-            if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) {
-                discardOriginRecords(player, id, originRecords);
-                continue;
-            }
-            int requested = Math.min(Math.min(stack.getCount(), maximum - inserted), pending);
-            int moved = insertIntoOriginInventory(resolution.adapter().handler(), stack, requested);
-            if (moved > 0) {
-                stack.shrink(moved);
-                inserted += moved;
-                consumeOriginRecords(player, id, originRecords, moved);
-            }
-        }
-        return inserted;
+    private void consumeMatchingOriginRecords(ServerPlayer player, UUID id, ItemStack stack, int count) {
+        if (count <= 0 || stack.isEmpty()) return;
+        consumeOriginRecords(player, id, matchingOriginRecords(player, id, stack), count);
     }
 
     private void discardOriginRecords(ServerPlayer player, UUID id,
@@ -1069,72 +1011,85 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (carried.isEmpty()) {
             ItemStack existing = handler.getStackInSlot(slot);
             if (existing.isEmpty()) return 0;
-            int amount = Math.min(existing.getMaxStackSize(),
-                    button == 1 ? (existing.getCount() + 1) / 2 : existing.getCount());
-            ItemStack simulated = handler.extractItem(slot, amount, true);
-            if (!ItemStack.isSameItemSameComponents(existing, simulated) || simulated.isEmpty()) return 0;
-            int extractedCount = Math.min(amount, simulated.getCount());
-            ItemStack extracted;
-            if (handler instanceof IItemHandlerModifiable modifiable) {
-                ItemStack remaining = existing.copyWithCount(existing.getCount() - extractedCount);
-                extracted = existing.copyWithCount(extractedCount);
-                modifiable.setStackInSlot(slot, remaining);
-            } else {
-                extracted = handler.extractItem(slot, extractedCount, false);
-                if (extracted.isEmpty() || !ItemStack.isSameItemSameComponents(existing, extracted)) return 0;
-            }
+            int amount = TerminalInsertionRules.extractionCount(
+                    existing.getCount(), existing.getMaxStackSize(), button == 1);
+            int cursorCapacity = existing.getMaxStackSize();
+            int extractedCount = Math.min(amount, cursorCapacity);
+            ItemStack extracted = extractRemoteSlot(handler, slot, extractedCount);
+            if (extracted.isEmpty()) return 0;
             recordExtraction((ServerPlayer) entity, adapter.connection(), slot, extracted);
             setCarried(extracted);
             return 0;
         }
-        int incomingCount = carried.getCount();
-        int requested = button == 1 ? 1 : incomingCount;
         ItemStack existing = handler.getStackInSlot(slot);
         if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, carried)) {
-            ItemStack simulatedExtraction = handler.extractItem(slot, existing.getCount(), true);
-            if (button == 0 && handler instanceof IItemHandlerModifiable modifiable
-                    && ItemStack.isSameItemSameComponents(existing, simulatedExtraction)
-                    && simulatedExtraction.getCount() == existing.getCount()
-                    && handler.isItemValid(slot, carried)
-                    && carried.getCount() <= Math.min(handler.getSlotLimit(slot), carried.getMaxStackSize())
-                    && existing.getCount() <= carried.getMaxStackSize()) {
-                modifiable.setStackInSlot(slot, carried.copy());
-                recordExtraction((ServerPlayer) entity, adapter.connection(), slot, existing);
-                setCarried(existing.copy());
-                return incomingCount;
-            }
-            return 0;
+            return swapRemoteSlot(adapter, slot, carried, button);
         }
-        if (!handler.isItemValid(slot, carried)) {
-            setCarried(carried);
-            return 0;
-        }
-        int limit = Math.max(0, handler.getSlotLimit(slot));
-        limit = Math.min(limit, carried.getMaxStackSize());
-        int currentCount = existing.isEmpty() ? 0 : existing.getCount();
-        int capacity = Math.max(0, limit - currentCount);
-        int offeredCount = Math.min(requested, capacity);
-        if (offeredCount <= 0) return 0;
-        ItemStack offered = carried.copyWithCount(offeredCount);
-        ItemStack simulated = handler.insertItem(slot, offered, true);
-        if (!simulated.isEmpty() && !ItemStack.isSameItemSameComponents(carried, simulated)) return 0;
-        int accepted = offeredCount - simulated.getCount();
-        if (accepted <= 0) return 0;
-        int inserted;
-        if (handler instanceof IItemHandlerModifiable modifiable) {
-            ItemStack updated = existing.isEmpty()
-                    ? carried.copyWithCount(accepted)
-                    : existing.copyWithCount(currentCount + accepted);
-            modifiable.setStackInSlot(slot, updated);
-            inserted = accepted;
-        } else {
-            ItemStack remainder = handler.insertItem(slot, offered.copyWithCount(accepted), false);
-            if (!remainder.isEmpty() && !ItemStack.isSameItemSameComponents(carried, remainder)) return 0;
-            inserted = accepted - remainder.getCount();
-        }
-        carried.shrink(inserted);
+        int requested = button == 1 ? 1 : carried.getCount();
+        int inserted = insertRemoteSlot(handler, slot, carried, requested);
         setCarried(carried);
         return inserted;
+    }
+
+    private int swapRemoteSlot(InventoryAdapter adapter, int slot, ItemStack carried, int button) {
+        IItemHandler handler = adapter.handler();
+        ItemStack existing = handler.getStackInSlot(slot).copy();
+        if (button == 1 && (carried.getCount() != 1 || existing.getCount() != 1)) return 0;
+        if (!handler.isItemValid(slot, carried)
+                || carried.getCount() > Math.min(handler.getSlotLimit(slot), carried.getMaxStackSize())
+                || existing.getCount() > existing.getMaxStackSize()) return 0;
+        ItemStack simulated = handler.extractItem(slot, existing.getCount(), true);
+        if (!ItemStack.isSameItemSameComponents(existing, simulated)
+                || simulated.getCount() != existing.getCount()) return 0;
+
+        ItemStack extracted = extractRemoteSlot(handler, slot, existing.getCount());
+        if (!ItemStack.isSameItemSameComponents(existing, extracted)
+                || extracted.getCount() != existing.getCount()) {
+            returnToRemoteSlot(handler, slot, extracted);
+            return 0;
+        }
+
+        ItemStack incoming = carried.copy();
+        int inserted = insertRemoteSlot(handler, slot, incoming, incoming.getCount());
+        if (inserted != carried.getCount()) {
+            if (inserted > 0) extractRemoteSlot(handler, slot, inserted);
+            returnToRemoteSlot(handler, slot, extracted);
+            return 0;
+        }
+
+        recordExtraction((ServerPlayer) entity, adapter.connection(), slot, extracted);
+        setCarried(extracted);
+        return inserted;
+    }
+
+    private void returnToRemoteSlot(IItemHandler handler, int slot, ItemStack stack) {
+        if (stack.isEmpty()) return;
+        insertRemoteSlot(handler, slot, stack, stack.getCount());
+        if (!stack.isEmpty() && entity instanceof ServerPlayer player) {
+            player.getInventory().placeItemBackInInventory(stack);
+        }
+    }
+
+    private ItemStack extractRemoteSlot(IItemHandler handler, int slot, int requested) {
+        if (requested <= 0 || slot < 0 || slot >= handler.getSlots()) return ItemStack.EMPTY;
+        ItemStack existing = handler.getStackInSlot(slot).copy();
+        if (existing.isEmpty()) return ItemStack.EMPTY;
+        ItemStack simulated = handler.extractItem(slot, requested, true);
+        if (simulated.isEmpty() || !ItemStack.isSameItemSameComponents(existing, simulated)) return ItemStack.EMPTY;
+        int amount = Math.min(requested, simulated.getCount());
+        if (amount <= 0) return ItemStack.EMPTY;
+        ItemStack extracted = handler.extractItem(slot, amount, false);
+        if (extracted.isEmpty() || !ItemStack.isSameItemSameComponents(existing, extracted)) {
+            returnToRemoteSlot(handler, slot, extracted);
+            return ItemStack.EMPTY;
+        }
+        if (extracted.getCount() > amount) {
+            int excessCount = extracted.getCount() - amount;
+            ItemStack excess = extracted.copyWithCount(excessCount);
+            extracted.shrink(excessCount);
+            returnToRemoteSlot(handler, slot, excess);
+        }
+        return extracted;
     }
 
     // Remote drag targets are resolved and mutated as one server-side operation.
@@ -1145,6 +1100,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (creativeFill && !player.getAbilities().instabuild) return;
         int requested = click.button() == 1
                 ? Math.min(carried.getCount(), click.dragTargets().size()) : carried.getCount();
+        ItemStack itemType = carried.copyWithCount(1);
 
         List<RemoteDestination> destinations = new ArrayList<>();
         Set<TerminalStorageClickPayload.SlotTarget> seen = new HashSet<>();
@@ -1193,51 +1149,29 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             }
         } else {
             int distributionBudget = Math.max(0, requested - originInserted);
+            int remoteInserted = 0;
             if (click.button() == 1) {
                 for (RemoteDestination destination : destinations) {
                     if (distributionBudget <= 0 || carried.isEmpty()) break;
-                    int inserted = insertRemoteDragSlot(destination.handler(), destination.slot(), carried, 1);
+                    int inserted = insertRemoteSlot(destination.handler(), destination.slot(), carried, 1);
                     distributionBudget -= inserted;
+                    remoteInserted += inserted;
                 }
             } else {
                 int amount = distributionBudget / destinations.size();
                 for (RemoteDestination destination : destinations) {
                     if (carried.isEmpty() || amount <= 0 || distributionBudget <= 0) break;
-                    int inserted = insertRemoteDragSlot(destination.handler(), destination.slot(), carried,
+                    int inserted = insertRemoteSlot(destination.handler(), destination.slot(), carried,
                             Math.min(amount, distributionBudget));
                     distributionBudget -= inserted;
+                    remoteInserted += inserted;
                 }
+            }
+            if (remoteInserted > 0) {
+                consumeMatchingOriginRecords(player, terminalId(), itemType, remoteInserted);
             }
         }
         setCarried(carried);
-    }
-
-    // Some mod handlers redirect insertItem; preserve the hovered index when directly modifiable.
-    private int insertRemoteDragSlot(IItemHandler handler, int slot, ItemStack carried, int requested) {
-        if (!(handler instanceof IItemHandlerModifiable modifiable)
-                || handler instanceof InvWrapper
-                || handler instanceof SidedInvWrapper
-                || handler instanceof CombinedInvWrapper) {
-            return insertRemoteSlot(handler, slot, carried, requested);
-        }
-        if (!canAcceptRemoteSlot(handler, slot, carried)) return 0;
-        ItemStack existing = handler.getStackInSlot(slot);
-        int currentCount = existing.isEmpty() ? 0 : existing.getCount();
-        int limit = Math.min(carried.getMaxStackSize(), handler.getSlotLimit(slot));
-        int offeredCount = Math.min(requested, Math.max(0, limit - currentCount));
-        if (offeredCount <= 0) return 0;
-
-        ItemStack simulated = handler.insertItem(slot, carried.copyWithCount(offeredCount), true);
-        if (!simulated.isEmpty() && !ItemStack.isSameItemSameComponents(carried, simulated)) return 0;
-        int inserted = offeredCount - simulated.getCount();
-        if (inserted <= 0) return 0;
-
-        ItemStack updated = existing.isEmpty()
-                ? carried.copyWithCount(inserted)
-                : existing.copyWithCount(currentCount + inserted);
-        modifiable.setStackInSlot(slot, updated);
-        carried.shrink(inserted);
-        return inserted;
     }
 
     private void handleRemoteShiftDrag(ServerPlayer player, TerminalStorageClickPayload click) {
@@ -1258,92 +1192,151 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
             if (resolution.status() == ConnectionStatus.AVAILABLE && resolution.adapter() != null
                     && handlerSlot < resolution.adapter().getSlots()) {
-                moveRemoteToPlayer(player, resolution.adapter(), handlerSlot);
+                InventoryAdapter adapter = resolution.adapter();
+                if (!adapter.handler().getStackInSlot(handlerSlot).isEmpty()
+                        && !moveRemoteToPlayer(player, adapter, handlerSlot)) break;
             }
         }
     }
 
     private void fillRemoteSlotCreative(IItemHandler handler, int slot, ItemStack stack) {
-        if (stack.isEmpty() || !handler.isItemValid(slot, stack)) return;
+        if (stack.isEmpty()) return;
         ItemStack existing = handler.getStackInSlot(slot);
         if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return;
-        int limit = Math.max(0, handler.getSlotLimit(slot));
-        int currentCount = existing.isEmpty() ? 0 : existing.getCount();
-        int count = Math.max(currentCount, Math.min(stack.getCount(), limit));
-        if (count <= currentCount) return;
-        ItemStack offered = stack.copyWithCount(count - currentCount);
-        ItemStack remainder = handler.insertItem(slot, offered, true);
-        if (!remainder.isEmpty()) return;
-        if (handler instanceof IItemHandlerModifiable modifiable) {
-            modifiable.setStackInSlot(slot, stack.copyWithCount(count));
-        } else {
-            handler.insertItem(slot, offered, false);
-        }
+        int capacity = Math.max(0, handler.getSlotLimit(slot) - (existing.isEmpty() ? 0 : existing.getCount()));
+        if (capacity <= 0) return;
+        ItemStack offered = stack.copyWithCount(capacity);
+        insertRemoteSlot(handler, slot, offered, capacity);
     }
 
     private boolean canAcceptRemoteSlot(IItemHandler handler, int slot, ItemStack stack) {
         ItemStack existing = handler.getStackInSlot(slot);
         if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return false;
-        int currentCount = existing.isEmpty() ? 0 : existing.getCount();
-        int limit = Math.max(0, handler.getSlotLimit(slot));
-        int capacity = limit - currentCount;
-        if (capacity <= 0 || !handler.isItemValid(slot, stack)) return false;
-        ItemStack simulated = handler.insertItem(slot, stack.copyWithCount(1), true);
-        int accepted = 1 - (simulated.isEmpty() ? 0 : simulated.getCount());
-        return accepted == 1;
+        if (!handler.isItemValid(slot, stack)) return false;
+        ItemStack simulatedRemainder = handler.insertItem(slot, stack.copyWithCount(1), true);
+        return isValidRemainder(stack, 1, simulatedRemainder)
+                && simulatedRemainder.getCount() == 0;
     }
 
     private int insertRemoteSlot(IItemHandler handler, int slot, ItemStack carried, int requested) {
-        if (!canAcceptRemoteSlot(handler, slot, carried)) return 0;
+        if (carried.isEmpty() || requested <= 0) return 0;
         ItemStack existing = handler.getStackInSlot(slot);
-        int currentCount = existing.isEmpty() ? 0 : existing.getCount();
-        int capacity = Math.max(0, handler.getSlotLimit(slot) - currentCount);
-        int offeredCount = Math.min(requested, capacity);
+        if ((!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, carried))
+                || !handler.isItemValid(slot, carried)) return 0;
+        int offeredCount = Math.min(requested, carried.getCount());
         if (offeredCount <= 0) return 0;
 
         ItemStack offered = carried.copyWithCount(offeredCount);
-        ItemStack simulated = handler.insertItem(slot, offered, true);
-        if (!simulated.isEmpty() && !ItemStack.isSameItemSameComponents(carried, simulated)) return 0;
-        int accepted = offeredCount - simulated.getCount();
+        ItemStack simulatedRemainder = handler.insertItem(slot, offered, true);
+        if (!isValidRemainder(carried, offeredCount, simulatedRemainder)) return 0;
+        int accepted = offeredCount - simulatedRemainder.getCount();
         if (accepted <= 0) return 0;
 
-        ItemStack remainder = handler.insertItem(slot, offered.copyWithCount(accepted), false);
-        if (!remainder.isEmpty() && !ItemStack.isSameItemSameComponents(carried, remainder)) return 0;
+        ItemStack remainder = handler.insertItem(slot, carried.copyWithCount(accepted), false);
+        if (!isValidRemainder(carried, accepted, remainder)) return 0;
         int inserted = accepted - remainder.getCount();
         carried.shrink(inserted);
         return inserted;
     }
 
-    private void moveRemoteToPlayer(ServerPlayer player, InventoryAdapter adapter, int slot) {
-        ItemStack source = adapter.handler().getStackInSlot(slot).copy();
-        if (source.isEmpty()) return;
-        int availableSpace = playerInventorySpace(source);
-        int wanted = Math.min(source.getCount(), availableSpace);
-        if (wanted <= 0) return;
-        ItemStack extracted = adapter.handler().extractItem(slot, wanted, false);
-        ItemStack remainder = extracted.copy();
-        moveItemStackTo(remainder, mainInventoryStart, hotbarStart + 9, false);
-        int inserted = extracted.getCount() - remainder.getCount();
+    private boolean moveRemoteToPlayer(ServerPlayer player, InventoryAdapter adapter, int slot) {
+        IItemHandler sourceHandler = adapter.handler();
+        ItemStack source = sourceHandler.getStackInSlot(slot).copy();
+        if (source.isEmpty()) return false;
+        int requested = TerminalInsertionRules.shiftExtractionCount(
+                source.getCount(), source.getMaxStackSize());
+        ItemStack simulatedExtraction = sourceHandler.extractItem(slot, requested, true);
+        if (!ItemStack.isSameItemSameComponents(source, simulatedExtraction) || simulatedExtraction.isEmpty()) {
+            return false;
+        }
+
+        int playerCapacity = simulatePlayerInsertion(simulatedExtraction,
+                Math.min(requested, simulatedExtraction.getCount()));
+        int amount = TerminalInsertionRules.confirmedTransferCount(
+                requested, simulatedExtraction.getCount(), playerCapacity);
+        if (amount <= 0) return false;
+
+        ItemStack extracted = extractRemoteSlot(sourceHandler, slot, amount);
+        if (!ItemStack.isSameItemSameComponents(source, extracted) || extracted.isEmpty()) {
+            return false;
+        }
+        int extractedCount = extracted.getCount();
+        ItemStack offered = extracted.copy();
+        insertIntoPlayerInventory(offered);
+        int inserted = extractedCount - offered.getCount();
         if (inserted > 0) {
             recordExtraction(player, adapter.connection(), slot, extracted.copyWithCount(inserted));
         }
-        if (!remainder.isEmpty()) adapter.handler().insertItem(slot, remainder, false);
+        if (!offered.isEmpty()) returnToRemoteSlot(sourceHandler, slot, offered);
+        return inserted > 0;
     }
 
-    private int playerInventorySpace(ItemStack stack) {
-        int space = 0;
-        for (int index = mainInventoryStart; index < hotbarStart + 9; index++) {
-            Slot target = slots.get(index);
-            if (isTerminalSlot(target.index) || !target.mayPlace(stack)) continue;
-            ItemStack existing = target.getItem();
-            if (existing.isEmpty()) {
-                space += Math.min(stack.getMaxStackSize(), target.getMaxStackSize(stack));
-            } else if (ItemStack.isSameItemSameComponents(existing, stack)) {
-                space += Math.max(0, Math.min(stack.getMaxStackSize(), target.getMaxStackSize(stack))
-                        - existing.getCount());
+    private int simulatePlayerInsertion(ItemStack stack, int requested) {
+        int inserted = simulateIntoPlayerRange(stack, requested, mainInventoryStart, hotbarStart);
+        return inserted + simulateIntoPlayerRange(stack, requested - inserted, hotbarStart, hotbarStart + 9);
+    }
+
+    private int simulateIntoPlayerRange(ItemStack stack, int requested, int start, int end) {
+        if (stack.isEmpty() || requested <= 0) return 0;
+        List<RemoteDestination> destinations = destinationsFor(
+                playerRangeHandler(start, end, stack), 0, end - start);
+        return simulateIntoDestinations(stack, requested, destinations);
+    }
+
+    private List<RemoteDestination> destinationsFor(IItemHandler handler, int start, int end) {
+        List<RemoteDestination> destinations = new ArrayList<>();
+        for (int slot = Math.max(0, start); slot < Math.min(handler.getSlots(), end); slot++) {
+            destinations.add(new RemoteDestination(handler, slot));
+        }
+        return destinations;
+    }
+
+    private int insertIntoDestinations(ItemStack stack, int requested, List<RemoteDestination> destinations) {
+        return insertIntoDestinations(stack, requested, destinations, false);
+    }
+
+    private int insertIntoDestinations(ItemStack stack, int requested, List<RemoteDestination> destinations,
+                                       boolean emptySlotsOnly) {
+        if (stack.isEmpty() || requested <= 0) return 0;
+        int inserted = 0;
+        int firstPass = emptySlotsOnly ? 1 : 0;
+        for (int pass = firstPass; pass < TerminalInsertionRules.PASS_COUNT && inserted < requested; pass++) {
+            for (RemoteDestination destination : destinations) {
+                if (inserted >= requested || stack.isEmpty()) break;
+                IItemHandler handler = destination.handler();
+                int slot = destination.slot();
+                ItemStack existing = handler.getStackInSlot(slot);
+                if (!acceptsInsertionSlot(existing, stack, pass) || !handler.isItemValid(slot, stack)) continue;
+                inserted += insertRemoteSlot(handler, slot, stack, requested - inserted);
             }
         }
-        return space;
+        return inserted;
+    }
+
+    private int simulateIntoDestinations(ItemStack stack, int requested,
+                                         List<RemoteDestination> destinations) {
+        if (stack.isEmpty() || requested <= 0) return 0;
+        int remaining = Math.min(requested, stack.getCount());
+        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && remaining > 0; pass++) {
+            for (RemoteDestination destination : destinations) {
+                if (remaining <= 0) break;
+                IItemHandler handler = destination.handler();
+                int slot = destination.slot();
+                ItemStack existing = handler.getStackInSlot(slot);
+                if (!acceptsInsertionSlot(existing, stack, pass) || !handler.isItemValid(slot, stack)) continue;
+                ItemStack offered = stack.copyWithCount(remaining);
+                ItemStack remainder = handler.insertItem(slot, offered, true);
+                if (!isValidRemainder(stack, remaining, remainder)) continue;
+                remaining -= offered.getCount() - remainder.getCount();
+            }
+        }
+        return Math.min(requested, stack.getCount()) - remaining;
+    }
+
+    private boolean isValidRemainder(ItemStack original, int offeredCount, ItemStack remainder) {
+        return remainder.isEmpty()
+                || ItemStack.isSameItemSameComponents(original, remainder)
+                && remainder.getCount() >= 0 && remainder.getCount() <= offeredCount;
     }
 
     public void dismissNotice(ServerPlayer player, TerminalNoticeDismissPayload payload) {
@@ -1418,29 +1411,11 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private void insertIntoPlayerInventory(ItemStack stack) {
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && !stack.isEmpty(); pass++) {
-            insertIntoPlayerRange(stack, mainInventoryStart, hotbarStart, pass);
-            insertIntoPlayerRange(stack, hotbarStart, hotbarStart + 9, pass);
-        }
-    }
-
-    private void insertIntoPlayerRange(ItemStack stack, int start, int end, int pass) {
-        for (int index = start; index < end && !stack.isEmpty(); index++) {
-            Slot target = slots.get(index);
-            if (isTerminalSlot(target.index) || !target.mayPlace(stack)) continue;
-            ItemStack existing = target.getItem();
-            if (!acceptsInsertionSlot(existing, stack, pass)) continue;
-            int limit = Math.min(stack.getMaxStackSize(), target.getMaxStackSize(stack));
-            int amount = Math.min(stack.getCount(), limit - (existing.isEmpty() ? 0 : existing.getCount()));
-            if (amount <= 0) continue;
-            if (existing.isEmpty()) {
-                target.set(stack.copyWithCount(amount));
-            } else {
-                existing.grow(amount);
-                target.setChanged();
-            }
-            stack.shrink(amount);
-        }
+        if (stack.isEmpty()) return;
+        IItemHandler main = playerRangeHandler(mainInventoryStart, hotbarStart, stack);
+        insertIntoDestinations(stack, stack.getCount(), destinationsFor(main, 0, main.getSlots()));
+        IItemHandler hotbar = playerRangeHandler(hotbarStart, hotbarStart + 9, stack);
+        insertIntoDestinations(stack, stack.getCount(), destinationsFor(hotbar, 0, hotbar.getSlots()));
     }
 
     private ItemStack insertIntoConnectedInventories(ItemStack stack) {
@@ -1453,21 +1428,17 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (id == null) return stack;
         List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
         if (connections.isEmpty() || !canUseConnectedInventories(player, notify)) return stack;
+        ItemStack itemType = stack.copyWithCount(1);
         insertIntoRememberedOrigins(stack, stack.getCount());
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && !stack.isEmpty(); pass++) {
-            for (TerminalConnection connection : connections) {
-                if (stack.isEmpty()) return ItemStack.EMPTY;
-                InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
-                if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) continue;
-                IItemHandler handler = resolution.adapter().handler();
-                for (int slot = 0; slot < handler.getSlots() && !stack.isEmpty(); slot++) {
-                    ItemStack existing = handler.getStackInSlot(slot);
-                    if (!acceptsInsertionSlot(existing, stack, pass)) continue;
-                    if (!handler.isItemValid(slot, stack)) continue;
-                    stack = handler.insertItem(slot, stack, false);
-                }
-            }
+        List<RemoteDestination> destinations = new ArrayList<>();
+        for (TerminalConnection connection : connections) {
+            InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
+            if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) continue;
+            IItemHandler handler = resolution.adapter().handler();
+            destinations.addAll(destinationsFor(handler, 0, handler.getSlots()));
         }
+        int inserted = insertIntoDestinations(stack, stack.getCount(), destinations);
+        consumeMatchingOriginRecords(player, id, itemType, inserted);
         return stack;
     }
 
@@ -1475,6 +1446,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (!(entity instanceof ServerPlayer player) || stack.isEmpty() || !canUseConnectedInventories(player, true)) {
             return stack;
         }
+        UUID id = terminalId();
+        ItemStack itemType = stack.copyWithCount(1);
         insertIntoRememberedOrigins(stack, stack.getCount());
         if (stack.isEmpty()) return ItemStack.EMPTY;
 
@@ -1495,19 +1468,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             }
         }
 
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && !stack.isEmpty(); pass++) {
-            for (RemoteDestination destination : destinations) {
-                if (stack.isEmpty()) break;
-                IItemHandler handler = destination.handler();
-                int slot = destination.slot();
-                ItemStack existing = handler.getStackInSlot(slot);
-                if (!acceptsInsertionSlot(existing, stack, pass)
-                        || !handler.isItemValid(slot, stack)) continue;
-                ItemStack simulated = handler.insertItem(slot, stack.copy(), true);
-                if (simulated.getCount() == stack.getCount()) continue;
-                stack = handler.insertItem(slot, stack, false);
-            }
-        }
+        int inserted = insertIntoDestinations(stack, stack.getCount(), destinations);
+        if (id != null) consumeMatchingOriginRecords(player, id, itemType, inserted);
         return stack;
     }
 
@@ -1520,103 +1482,90 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         destinations.add(new RemoteDestination(adapter.handler(), slot));
     }
 
-    private ItemStack simulateConnectedInsert(ItemStack stack) {
-        if (!(entity instanceof ServerPlayer player) || stack.isEmpty()) return stack;
-        UUID id = terminalId();
-        if (id == null) return stack;
-        List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
-        if (connections.isEmpty() || !canUseConnectedInventories(player, true)) return stack;
-        stack = simulateRememberedOriginInsert(stack, connections);
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && !stack.isEmpty(); pass++) {
-            for (TerminalConnection connection : connections) {
-                if (stack.isEmpty()) return ItemStack.EMPTY;
-                InventoryAdapter.Resolution resolution = resolve(connection);
-                if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) continue;
-                IItemHandler handler = resolution.adapter().handler();
-                for (int slot = 0; slot < handler.getSlots() && !stack.isEmpty(); slot++) {
-                    ItemStack existing = handler.getStackInSlot(slot);
-                    if (!acceptsInsertionSlot(existing, stack, pass)
-                            || !handler.isItemValid(slot, stack)) continue;
-                    stack = handler.insertItem(slot, stack, true);
-                }
-            }
-        }
-        return stack;
-    }
-
-    private ItemStack simulateRememberedOriginInsert(ItemStack stack, List<TerminalConnection> connections) {
-        if (!(entity instanceof ServerPlayer player) || stack.isEmpty() || !inventoryLockEnabled(player)) return stack;
-        UUID id = terminalId();
-        if (id == null) return stack;
-        ItemStack simulatedStack = stack.copy();
-        for (TerminalOriginMemory.OriginRecord record : TerminalOriginMemory.records(player, id)) {
-            if (simulatedStack.isEmpty()) break;
-            if (!ItemStack.isSameItemSameComponents(record.item(), simulatedStack)) continue;
-            TerminalConnection current = connections.stream()
-                    .filter(connection -> sameOriginConnection(connection, record.connection()))
-                    .findFirst().orElse(null);
-            if (current == null) break;
-            InventoryAdapter.Resolution resolution = verifyConnection(current, true);
-            if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) break;
-            int requested = Math.min(simulatedStack.getCount(), record.remaining());
-            int inserted = simulateOriginInventory(resolution.adapter().handler(), simulatedStack, requested);
-            simulatedStack.shrink(inserted);
-            if (inserted < requested) break;
-        }
-        return simulatedStack;
-    }
-
-    private int simulateOriginInventory(IItemHandler handler, ItemStack stack, int requested) {
-        int inserted = 0;
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && inserted < requested; pass++) {
-            for (int slot = 0; slot < handler.getSlots() && inserted < requested; slot++) {
-                ItemStack existing = handler.getStackInSlot(slot);
-                if (!acceptsInsertionSlot(existing, stack, pass)
-                        || !handler.isItemValid(slot, stack)) continue;
-                int count = Math.min(requested - inserted, stack.getCount() - inserted);
-                if (count <= 0) break;
-                ItemStack remainder = handler.insertItem(slot, stack.copyWithCount(count), true);
-                if (!remainder.isEmpty() && !ItemStack.isSameItemSameComponents(stack, remainder)) continue;
-                inserted += Math.max(0, Math.min(count, count - remainder.getCount()));
-            }
-        }
-        return inserted;
-    }
-
-    private boolean canFitCraftedResult(ItemStack result) {
-        ItemStack remainder = result.copy();
-        int playerSpace = playerInventorySpace(remainder);
-        remainder.shrink(Math.min(remainder.getCount(), playerSpace));
-        return remainder.isEmpty() || simulateConnectedInsert(remainder).isEmpty();
-    }
-
     private static boolean acceptsInsertionSlot(ItemStack existing, ItemStack incoming, int pass) {
         boolean empty = existing.isEmpty();
         boolean matches = !empty && ItemStack.isSameItemSameComponents(existing, incoming);
         return TerminalInsertionRules.acceptsSlot(empty, matches, pass);
     }
 
-    private static int insertionCapacity(ItemStack incoming, ItemStack existing, int slotLimit) {
-        return TerminalInsertionRules.capacity(incoming.getMaxStackSize(),
-                existing.isEmpty() ? 0 : existing.getCount(), slotLimit);
-    }
-
     private ItemStack quickMoveCraftingResult(Player player) {
         Slot resultSlot = slots.get(craftingResultIndex);
-        if (!resultSlot.hasItem()) return ItemStack.EMPTY;
-        ItemStack source = resultSlot.getItem();
-        ItemStack original = source.copy();
-        if (world.getRecipeManager().getRecipeFor(
-                RecipeType.CRAFTING, craftingGrid.asCraftInput(), world).isEmpty()
-                || !canFitCraftedResult(source)) return ItemStack.EMPTY;
-        ItemStack remaining = source.copy();
-        insertIntoPlayerInventory(remaining);
-        if (!remaining.isEmpty()) remaining = insertIntoConnectedInventories(remaining);
-        if (!remaining.isEmpty()) return ItemStack.EMPTY;
-        resultSlot.onQuickCraft(remaining, original);
-        resultSlot.setByPlayer(ItemStack.EMPTY);
-        resultSlot.onTake(player, remaining);
-        return original;
+        RecipeHolder<CraftingRecipe> initialRecipe = null;
+        ItemStack initialResult = ItemStack.EMPTY;
+        ConnectedDestination previousRemote = null;
+        int craftedCount = 0;
+        while (resultSlot.hasItem()) {
+            var recipe = world.getRecipeManager().getRecipeFor(
+                    RecipeType.CRAFTING, craftingGrid.asCraftInput(), world);
+            if (recipe.isEmpty()) break;
+            ItemStack output = resultSlot.getItem().copy();
+            if (initialRecipe == null) {
+                initialRecipe = recipe.get();
+                initialResult = output.copy();
+            } else if (!initialRecipe.id().equals(recipe.get().id())
+                    || !ItemStack.matches(initialResult, output)) {
+                break;
+            }
+
+            CraftingOutputInsertion insertion = insertCraftingOutput(player, output, previousRemote);
+            if (!insertion.inserted()) break;
+            previousRemote = insertion.remoteDestination();
+
+            List<ItemStack> gridBeforeCraft = new ArrayList<>(craftingGrid.getContainerSize());
+            for (int slot = 0; slot < craftingGrid.getContainerSize(); slot++) {
+                gridBeforeCraft.add(craftingGrid.getItem(slot).copy());
+            }
+            resultSlot.onQuickCraft(ItemStack.EMPTY, output);
+            resultSlot.setByPlayer(ItemStack.EMPTY);
+            resultSlot.onTake(player, ItemStack.EMPTY);
+            craftedCount += output.getCount();
+
+            boolean gridChanged = false;
+            for (int slot = 0; slot < craftingGrid.getContainerSize(); slot++) {
+                if (!ItemStack.matches(gridBeforeCraft.get(slot), craftingGrid.getItem(slot))) {
+                    gridChanged = true;
+                    break;
+                }
+            }
+            if (!gridChanged) break;
+        }
+        if (craftedCount == 0) return ItemStack.EMPTY;
+        broadcastChanges();
+        refreshServerView();
+        return initialResult;
+    }
+
+    private CraftingOutputInsertion insertCraftingOutput(Player player, ItemStack output,
+                                                         ConnectedDestination previousRemote) {
+        Slot destination = findPlayerSlot(mainInventoryStart, hotbarStart, output);
+        if (destination == null) {
+            destination = findPlayerSlot(hotbarStart, hotbarStart + 9, output);
+        }
+        if (destination != null) {
+            putInSlot(destination, output);
+            return new CraftingOutputInsertion(true, previousRemote);
+        }
+        if (!(player instanceof ServerPlayer serverPlayer)
+                || !canUseConnectedInventories(serverPlayer, true)) {
+            return new CraftingOutputInsertion(false, previousRemote);
+        }
+
+        ConnectedDestination connected = previousRemote != null
+                && canInsertConnectedStack(previousRemote, output)
+                ? previousRemote : findConnectedSlot(serverPlayer, output);
+        if (connected == null) return new CraftingOutputInsertion(false, previousRemote);
+        ItemStack moving = output.copy();
+        int inserted = insertRemoteSlot(connected.handler(), connected.slot(), moving, moving.getCount());
+        return new CraftingOutputInsertion(inserted == output.getCount(), connected);
+    }
+
+    private boolean canInsertConnectedStack(ConnectedDestination destination, ItemStack stack) {
+        IItemHandler handler = destination.handler();
+        if (destination.slot() >= handler.getSlots()) return false;
+        ItemStack existing = handler.getStackInSlot(destination.slot());
+        if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return false;
+        return simulateIntoDestinations(stack, stack.getCount(),
+                List.of(new RemoteDestination(handler, destination.slot()))) == stack.getCount();
     }
 
     @Override
@@ -1636,17 +1585,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         }
         if ((index >= craftingGridStart && index < craftingGridStart + 9)
                 || (index >= armorStart && index <= offhandIndex)) {
-            Slot source = slots.get(index);
-            if (!source.hasItem()) return ItemStack.EMPTY;
-            ItemStack original = source.getItem().copy();
-            ItemStack moving = original.copy();
-            insertIntoPlayerInventory(moving);
-            if (!moving.isEmpty()) moving = insertIntoConnectedInventories(moving);
-            int moved = original.getCount() - moving.getCount();
-            if (moved <= 0) return ItemStack.EMPTY;
-            source.set(moving);
-            source.onTake(player, original.copyWithCount(moved));
-            return original.copyWithCount(moved);
+            return quickMoveOutsideSlot(player, index);
         }
 
         if (isTerminalSlot(index) || index < mainInventoryStart || index >= hotbarStart + 9) {
@@ -1673,17 +1612,20 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private ItemStack quickMoveUpgrade(Player player, int index) {
+        return quickMoveOutsideSlot(player, index);
+    }
+
+    private ItemStack quickMoveOutsideSlot(Player player, int index) {
         Slot source = slots.get(index);
         if (!source.hasItem() || !source.mayPickup(player)) return ItemStack.EMPTY;
-        ItemStack existing = source.getItem();
-        if (existing.isEmpty()) return ItemStack.EMPTY;
+        ItemStack original = source.getItem().copy();
 
-        Slot destination = findPlayerSlot(mainInventoryStart, hotbarStart, existing);
+        Slot destination = findPlayerSlot(mainInventoryStart, hotbarStart, original);
         if (destination == null) {
-            destination = findPlayerSlot(hotbarStart, hotbarStart + 9, existing);
+            destination = findPlayerSlot(hotbarStart, hotbarStart + 9, original);
         }
         if (destination != null) {
-            ItemStack moved = source.remove(existing.getCount());
+            ItemStack moved = source.remove(original.getCount());
             if (moved.isEmpty()) return ItemStack.EMPTY;
             ItemStack remainder = putInSlot(destination, moved);
             if (!remainder.isEmpty()) source.set(remainder);
@@ -1694,22 +1636,14 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
 
         if (!(player instanceof ServerPlayer serverPlayer)
                 || !canUseConnectedInventories(serverPlayer, true)) return ItemStack.EMPTY;
-        ItemStack original = existing.copy();
-        ItemStack moved = source.remove(existing.getCount());
+        ConnectedDestination connected = findConnectedSlot(serverPlayer, original);
+        if (connected == null) return ItemStack.EMPTY;
+        ItemStack moved = source.remove(original.getCount());
         if (moved.isEmpty()) return ItemStack.EMPTY;
-        int prioritized = insertIntoRememberedOrigins(moved, moved.getCount());
-        int inserted = prioritized;
-        if (!moved.isEmpty()) {
-            ConnectedDestination connected = findConnectedSlot(serverPlayer, moved);
-            if (connected == null) {
-                source.set(moved);
-                source.setChanged();
-                return ItemStack.EMPTY;
-            }
-            ItemStack remainder = connected.handler().insertItem(connected.slot(), moved, false);
-            inserted += moved.getCount() - remainder.getCount();
-            if (!remainder.isEmpty()) source.set(remainder);
-        }
+        int inserted = insertRemoteSlot(connected.handler(), connected.slot(), moved, moved.getCount());
+        ItemStack remainder = moved;
+        if (!remainder.isEmpty()) source.set(remainder);
+        if (inserted <= 0) return ItemStack.EMPTY;
         source.onTake(player, original.copyWithCount(inserted));
         broadcastChanges();
         refreshServerView();
@@ -1755,7 +1689,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             IItemHandler handler = resolution.adapter().handler();
             for (int slot = 0; slot < handler.getSlots(); slot++) {
                 if (!handler.getStackInSlot(slot).isEmpty() || !handler.isItemValid(slot, stack)) continue;
-                if (handler.insertItem(slot, stack.copy(), true).isEmpty()) {
+                if (simulateIntoDestinations(stack, stack.getCount(),
+                        List.of(new RemoteDestination(handler, slot))) == stack.getCount()) {
                     return new ConnectedDestination(handler, slot);
                 }
             }
@@ -1763,9 +1698,65 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return null;
     }
 
+    private IItemHandler playerRangeHandler(int start, int end, ItemStack limitItem) {
+        List<Slot> targets = new ArrayList<>();
+        for (int index = start; index < end; index++) {
+            Slot target = slots.get(index);
+            if (!isTerminalSlot(target.index)) targets.add(target);
+        }
+        return new IItemHandler() {
+            @Override
+            public int getSlots() {
+                return targets.size();
+            }
+
+            @Override
+            public ItemStack getStackInSlot(int slot) {
+                return slot < 0 || slot >= targets.size() ? ItemStack.EMPTY : targets.get(slot).getItem();
+            }
+
+            @Override
+            public ItemStack insertItem(int slot, ItemStack stack, boolean simulate) {
+                if (slot < 0 || slot >= targets.size() || stack.isEmpty()) return stack;
+                Slot target = targets.get(slot);
+                if (!target.mayPlace(stack)) return stack;
+                ItemStack existing = target.getItem();
+                if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return stack;
+                int currentCount = existing.isEmpty() ? 0 : existing.getCount();
+                int limit = Math.min(stack.getMaxStackSize(), target.getMaxStackSize(stack));
+                int accepted = Math.min(stack.getCount(), Math.max(0, limit - currentCount));
+                if (accepted <= 0) return stack;
+                if (!simulate) {
+                    if (existing.isEmpty()) target.set(stack.copyWithCount(accepted));
+                    else {
+                        existing.grow(accepted);
+                        target.setChanged();
+                    }
+                }
+                return accepted == stack.getCount() ? ItemStack.EMPTY : stack.copyWithCount(stack.getCount() - accepted);
+            }
+
+            @Override
+            public ItemStack extractItem(int slot, int amount, boolean simulate) {
+                return ItemStack.EMPTY;
+            }
+
+            @Override
+            public int getSlotLimit(int slot) {
+                return slot < 0 || slot >= targets.size()
+                        ? 0 : Math.max(0, targets.get(slot).getMaxStackSize(limitItem));
+            }
+
+            @Override
+            public boolean isItemValid(int slot, ItemStack stack) {
+                return slot >= 0 && slot < targets.size() && targets.get(slot).mayPlace(stack);
+            }
+        };
+    }
+
     private record ConnectedDestination(IItemHandler handler, int slot) { }
+    private record CraftingOutputInsertion(boolean inserted, ConnectedDestination remoteDestination) { }
     private record RemoteDestination(IItemHandler handler, int slot) { }
-    private record ShiftDragDestination(RemoteDestination destination, ItemStack item) { }
 
     private void depositIntoConnections(ItemStack stack, boolean storageOnly) {
         if (!(entity instanceof ServerPlayer player) || stack.isEmpty()) return;
@@ -1773,22 +1764,18 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (id == null) return;
         List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
         if (connections.isEmpty() || !canUseConnectedInventories(player, false)) return;
+        ItemStack itemType = stack.copyWithCount(1);
         insertIntoRememberedOrigins(stack, stack.getCount());
+        List<RemoteDestination> destinations = new ArrayList<>();
         for (TerminalConnection connection : connections) {
-            if (stack.isEmpty()) return;
             InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
             if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null
                     || resolution.adapter().isStorage() != storageOnly) continue;
             IItemHandler handler = resolution.adapter().handler();
-            for (int slot = 0; slot < handler.getSlots() && !stack.isEmpty(); slot++) {
-                if (!handler.isItemValid(slot, stack)) continue;
-                ItemStack remainder = handler.insertItem(slot, stack.copy(), true);
-                int accepted = stack.getCount() - remainder.getCount();
-                if (accepted <= 0) continue;
-                ItemStack actualRemainder = handler.insertItem(slot, stack.copyWithCount(accepted), false);
-                stack.shrink(accepted - actualRemainder.getCount());
-            }
+            destinations.addAll(destinationsFor(handler, 0, handler.getSlots()));
         }
+        int inserted = insertIntoDestinations(stack, stack.getCount(), destinations);
+        consumeMatchingOriginRecords(player, id, itemType, inserted);
     }
 
     @Override

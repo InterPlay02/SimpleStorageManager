@@ -10,14 +10,25 @@ import java.util.UUID;
 
 class StorageManagerLogicTest {
     @Test
-    void terminalInsertionUsesMatchingSlotsBeforeEmptySlotsAndHonorsBothLimits() {
+    // Checks insertion priorities and stack limits for connected slots.
+    void terminalInsertionRules() {
         assertTrue(TerminalInsertionRules.acceptsSlot(false, true, 0));
         assertFalse(TerminalInsertionRules.acceptsSlot(true, false, 0));
         assertFalse(TerminalInsertionRules.acceptsSlot(false, false, 0));
         assertTrue(TerminalInsertionRules.acceptsSlot(true, false, 1));
         assertFalse(TerminalInsertionRules.acceptsSlot(false, true, 1));
-        assertEquals(24, TerminalInsertionRules.capacity(64, 40, 128));
-        assertEquals(10, TerminalInsertionRules.capacity(64, 0, 10));
+        assertEquals(108, TerminalInsertionRules.previewCapacity(20, 128));
+        assertEquals(64, TerminalInsertionRules.extractionCount(128, 64, false));
+        assertEquals(32, TerminalInsertionRules.extractionCount(128, 64, true));
+        assertEquals(8, TerminalInsertionRules.extractionCount(50, 16, true));
+        assertEquals(1, TerminalInsertionRules.extractionCount(50, 1, true));
+        assertEquals(12, TerminalInsertionRules.extractionCount(12, 16, false));
+        assertEquals(0, TerminalInsertionRules.extractionCount(12, 0, true));
+        assertEquals(64, TerminalInsertionRules.shiftExtractionCount(128, 64));
+        assertEquals(40, TerminalInsertionRules.shiftExtractionCount(40, 64));
+        assertEquals(0, TerminalInsertionRules.shiftExtractionCount(128, 0));
+        assertEquals(32, TerminalInsertionRules.confirmedTransferCount(64, 40, 32));
+        assertEquals(0, TerminalInsertionRules.confirmedTransferCount(64, 64, 0));
     }
 
     @Test

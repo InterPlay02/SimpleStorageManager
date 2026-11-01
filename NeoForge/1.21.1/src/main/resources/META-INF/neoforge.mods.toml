@@ -4,7 +4,7 @@ license="Not specified"
 
 [[mods]]
 modId="simplestoragemanager"
-version="0.3-alpha"
+version="0.4-alpha"
 displayName="Simple Storage Manager"
 displayURL=""
 credits="Created using Codex and Github Copilot."

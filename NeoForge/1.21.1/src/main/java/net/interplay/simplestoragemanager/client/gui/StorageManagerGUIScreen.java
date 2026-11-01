@@ -682,64 +682,74 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         List<Integer> originCounts = view.originTargets().stream()
                 .map(TerminalViewPayload.OriginTarget::count).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-        List<ShiftDragPreviewDestination> selectedDestinations = new ArrayList<>();
         for (int index : itemDragSlots) {
             if (index == menu.craftingResultIndex || menu.isTerminalSlot(index)) continue;
             ItemStack moving = playerPreviewItems.getOrDefault(index,
                     menu.slots.get(index).getItem()).copy();
             if (moving.isEmpty()) continue;
-            if (view.locked()) insertPreviewIntoOrigins(moving, originCounts);
-            insertPreviewShiftDragRemainder(moving, selectedDestinations);
+            if (menu.isOutsidePlayerInventorySlot(index)) {
+                if (!insertPreviewWholeStackIntoPlayerInventory(moving)) {
+                    insertPreviewIntoFirstEmptyRemote(moving);
+                }
+                playerPreviewItems.put(index, moving);
+                continue;
+            }
+            if (!menu.isPlayerInventorySlot(index)) continue;
+            boolean hasOrigin = view.originTargets().stream().anyMatch(origin ->
+                    origin.count() > 0 && ItemStack.isSameItemSameComponents(origin.item(), moving));
+            boolean lockedWithoutOrigin = view.locked() && !hasOrigin;
+            if (view.locked() && hasOrigin) insertPreviewIntoOrigins(moving, originCounts);
+            insertPreviewIntoRemote(moving, lockedWithoutOrigin);
             playerPreviewItems.put(index, moving);
         }
     }
 
-    private void insertPreviewShiftDragRemainder(ItemStack moving,
-                                                 List<ShiftDragPreviewDestination> selectedDestinations) {
-        if (moving.isEmpty()) return;
-        for (ShiftDragPreviewDestination selected : selectedDestinations) {
-            if (ItemStack.isSameItemSameComponents(selected.item(), moving)) {
-                insertPreviewShiftDragAt(moving, selected.slotKey());
+    private boolean insertPreviewWholeStackIntoPlayerInventory(ItemStack moving) {
+        return insertPreviewWholeStackIntoPlayerRange(moving, menu.mainInventoryStart, menu.hotbarStart)
+                || insertPreviewWholeStackIntoPlayerRange(moving, menu.hotbarStart, menu.hotbarStart + 9);
+    }
+
+    private boolean insertPreviewWholeStackIntoPlayerRange(ItemStack moving, int start, int end) {
+        for (int index = start; index < end; index++) {
+            Slot destination = menu.slots.get(index);
+            if (!destination.mayPlace(moving)) continue;
+            ItemStack existing = playerPreviewItems.getOrDefault(index, destination.getItem());
+            if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, moving)) continue;
+            int currentCount = existing.isEmpty() ? 0 : existing.getCount();
+            int limit = Math.min(moving.getMaxStackSize(), destination.getMaxStackSize(moving));
+            if (limit - currentCount < moving.getCount()) continue;
+            playerPreviewItems.put(index, existing.isEmpty() ? moving.copy()
+                    : existing.copyWithCount(currentCount + moving.getCount()));
+            moving.setCount(0);
+            return true;
+        }
+        return false;
+    }
+
+    private void insertPreviewIntoFirstEmptyRemote(ItemStack moving) {
+        for (int sectionIndex = 0; sectionIndex < view.sections().size(); sectionIndex++) {
+            TerminalViewPayload.Section section = view.sections().get(sectionIndex);
+            if (section.connectionStatus() != ConnectionStatus.AVAILABLE) continue;
+            for (int slot = 0; slot < section.slotCount(); slot++) {
+                long slotKey = key(sectionIndex, slot);
+                ItemStack existing = remotePreviewItems.getOrDefault(slotKey,
+                        remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
+                if (!existing.isEmpty()
+                        || remoteSlotLimit(slotKey, moving) < moving.getCount()) continue;
+                remotePreviewItems.put(slotKey, moving.copy());
+                moving.setCount(0);
                 return;
             }
         }
-
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT; pass++) {
-            for (int sectionIndex = 0; sectionIndex < view.sections().size(); sectionIndex++) {
-                TerminalViewPayload.Section section = view.sections().get(sectionIndex);
-                if (section.connectionStatus() != ConnectionStatus.AVAILABLE) continue;
-                for (int slot = 0; slot < section.slotCount(); slot++) {
-                    long slotKey = key(sectionIndex, slot);
-                    ItemStack present = remotePreviewItems.getOrDefault(slotKey,
-                            remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
-                    if (!acceptsInsertionSlot(present, moving, pass)) continue;
-                    int amount = Math.min(moving.getCount(),
-                            insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving)));
-                    if (amount <= 0) continue;
-                    remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
-                            : present.copyWithCount(present.getCount() + amount));
-                    moving.shrink(amount);
-                    selectedDestinations.add(new ShiftDragPreviewDestination(slotKey,
-                            remotePreviewItems.get(slotKey)));
-                    return;
-                }
-            }
-        }
-    }
-
-    private void insertPreviewShiftDragAt(ItemStack moving, long slotKey) {
-        ItemStack present = remotePreviewItems.getOrDefault(slotKey,
-                remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
-        if (!ItemStack.isSameItemSameComponents(present, moving)) return;
-        int amount = Math.min(moving.getCount(),
-                insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving)));
-        if (amount <= 0) return;
-        remotePreviewItems.put(slotKey, present.copyWithCount(present.getCount() + amount));
-        moving.shrink(amount);
     }
 
     private void insertPreviewIntoRemote(ItemStack moving) {
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && !moving.isEmpty(); pass++) {
+        insertPreviewIntoRemote(moving, false);
+    }
+
+    private void insertPreviewIntoRemote(ItemStack moving, boolean emptySlotsOnly) {
+        int firstPass = emptySlotsOnly ? 1 : 0;
+        for (int pass = firstPass; pass < TerminalInsertionRules.PASS_COUNT && !moving.isEmpty(); pass++) {
             insertPreviewIntoRemote(moving, pass);
         }
     }
@@ -755,7 +765,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 if (!acceptsInsertionSlot(present, moving, pass)) continue;
                 int currentCount = present.isEmpty() ? 0 : present.getCount();
                 int amount = Math.min(moving.getCount(),
-                        insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving)));
+                        insertionCapacity(present, remoteSlotLimit(slotKey, moving)));
                 if (amount <= 0) continue;
                 remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
                         : present.copyWithCount(currentCount + amount));
@@ -788,9 +798,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         return TerminalInsertionRules.acceptsSlot(empty, matches, pass);
     }
 
-    private static int insertionCapacity(ItemStack incoming, ItemStack existing, int slotLimit) {
-        return TerminalInsertionRules.capacity(incoming.getMaxStackSize(),
-                existing.isEmpty() ? 0 : existing.getCount(), slotLimit);
+    private static int insertionCapacity(ItemStack existing, int slotLimit) {
+        return TerminalInsertionRules.previewCapacity(existing.isEmpty() ? 0 : existing.getCount(), slotLimit);
     }
 
     private int insertPreviewIntoOrigin(ItemStack moving, TerminalViewPayload.OriginTarget origin, int requested) {
@@ -805,7 +814,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 ItemStack present = remotePreviewItems.getOrDefault(slotKey,
                         remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
                 if (!acceptsInsertionSlot(present, moving, pass)) continue;
-                int capacity = insertionCapacity(moving, present, remoteSlotLimit(slotKey, moving));
+                int capacity = insertionCapacity(present, remoteSlotLimit(slotKey, moving));
                 int amount = Math.min(requested - inserted, Math.min(moving.getCount() - inserted, capacity));
                 if (amount <= 0) continue;
                 remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
@@ -933,7 +942,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 long slotKey = key(target.section(), target.slot());
                 ItemStack source = remoteItems.getOrDefault(slotKey, ItemStack.EMPTY).copy();
                 if (source.isEmpty()) continue;
-                insertPreviewIntoPlayerInventory(source);
+                int requested = TerminalInsertionRules.shiftExtractionCount(source.getCount(),
+                        source.getMaxStackSize());
+                ItemStack moving = source.copyWithCount(requested);
+                insertPreviewIntoPlayerInventory(moving);
+                source.shrink(requested - moving.getCount());
                 remotePreviewItems.put(slotKey, source);
             }
             remotePreviewCarried = ItemStack.EMPTY;
@@ -1195,7 +1208,6 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     }
 
     private record RemoteHit(int section, int slot, ItemStack stack) { }
-    private record ShiftDragPreviewDestination(long slotKey, ItemStack item) { }
 
     private record ClientLayoutEntry(int sectionIndex, TerminalViewPayload.Section section,
                                      TerminalViewPayload.Notice notice) {
