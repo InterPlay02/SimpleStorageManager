@@ -44,6 +44,7 @@ import net.interplay.simplestoragemanager.logic.UpgradeSlotRules;
 import net.interplay.simplestoragemanager.logic.UpgradeAccessRules;
 import net.interplay.simplestoragemanager.logic.TerminalOwnershipRules;
 import net.interplay.simplestoragemanager.integration.SophisticatedStorageManualClicks;
+import net.interplay.simplestoragemanager.integration.StorageDrawersManualClicks;
 import net.interplay.simplestoragemanager.network.TerminalNoticeDismissPayload;
 import net.interplay.simplestoragemanager.network.TerminalStorageClickPayload;
 import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
@@ -1023,6 +1024,12 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             setCarried(carried);
             return Math.max(0, inserted);
         }
+        if (!carried.isEmpty() && supportsStorageDrawersManualClick(adapter, slot)) {
+            int requested = ManualInsertionRules.clickRequest(carried.getCount(), button == 1);
+            int inserted = StorageDrawersManualClicks.insert(world, adapter, slot, carried, requested);
+            setCarried(carried);
+            return Math.max(0, inserted);
+        }
         if (carried.isEmpty()) {
             ItemStack existing = handler.getStackInSlot(slot);
             if (existing.isEmpty()) return 0;
@@ -1128,6 +1135,21 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 && SophisticatedStorageManualClicks.supports(world, adapter, slot);
     }
 
+    private boolean supportsStorageDrawersManualClick(InventoryAdapter adapter, int slot) {
+        return ModList.get().isLoaded("storagedrawers")
+                && StorageDrawersManualClicks.supports(world, adapter, slot);
+    }
+
+    private int manualRemoteCapacity(InventoryAdapter adapter, int slot, ItemStack carried) {
+        if (supportsSophisticatedManualClick(adapter, slot)) {
+            return SophisticatedStorageManualClicks.simulatedCapacity(world, adapter, slot, carried);
+        }
+        if (supportsStorageDrawersManualClick(adapter, slot)) {
+            return StorageDrawersManualClicks.simulatedCapacity(world, adapter, slot, carried);
+        }
+        return 0;
+    }
+
     private void returnToRemoteSlot(IItemHandler handler, int slot, ItemStack stack) {
         if (stack.isEmpty()) return;
         insertRemoteSlot(handler, slot, stack, stack.getCount());
@@ -1172,8 +1194,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         List<ManualRemoteDestination> manualDestinations = new ArrayList<>();
         Set<TerminalStorageClickPayload.SlotTarget> seen = new HashSet<>();
         boolean targetsOrigin = false;
-        boolean hasDirectSophisticated = false;
-        boolean checkedDragStart = false;
+        boolean hasDirectManualDestination = false;
         List<TerminalOriginMemory.OriginRecord> matchingOrigins = inventoryLockEnabled(player)
                 ? matchingOriginRecords(player, terminalId(), carried) : List.of();
         for (TerminalStorageClickPayload.SlotTarget target : click.dragTargets()) {
@@ -1194,14 +1215,11 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter adapter = resolution.adapter();
             if (resolution.status() != ConnectionStatus.AVAILABLE || adapter == null
                     || handlerSlot < 0 || handlerSlot >= adapter.getSlots()) continue;
-            boolean directSophisticated = click.button() != 2
-                    && ModList.get().isLoaded("sophisticatedstorage")
-                    && SophisticatedStorageManualClicks.supports(world, adapter, handlerSlot);
-            if (!checkedDragStart && directSophisticated && click.button() == 0
-                    && !adapter.handler().getStackInSlot(handlerSlot).isEmpty()) return;
-            checkedDragStart = true;
-            int capacity = directSophisticated
-                    ? SophisticatedStorageManualClicks.simulatedCapacity(world, adapter, handlerSlot, carried)
+            boolean directManual = click.button() != 2
+                    && (supportsSophisticatedManualClick(adapter, handlerSlot)
+                    || supportsStorageDrawersManualClick(adapter, handlerSlot));
+            int capacity = directManual
+                    ? manualRemoteCapacity(adapter, handlerSlot, carried)
                     : canAcceptRemoteSlot(adapter.handler(), handlerSlot, carried) ? carried.getCount() : 0;
             if (capacity <= 0) continue;
             TerminalConnection targetConnection = connection;
@@ -1210,8 +1228,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 targetsOrigin = true;
             }
             destinations.add(new RemoteDestination(adapter.handler(), handlerSlot));
-            manualDestinations.add(new ManualRemoteDestination(adapter, handlerSlot, directSophisticated, capacity));
-            hasDirectSophisticated |= directSophisticated;
+            manualDestinations.add(new ManualRemoteDestination(adapter, handlerSlot, directManual, capacity));
+            hasDirectManualDestination |= directManual;
         }
 
         int originInserted = 0;
@@ -1232,7 +1250,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             int remoteInserted = 0;
             List<Integer> capacities = new ArrayList<>(manualDestinations.size());
             for (ManualRemoteDestination destination : manualDestinations) {
-                capacities.add(destination.directSophisticated()
+                capacities.add(destination.directManual()
                         ? destination.capacity() : distributionBudget);
             }
             ManualInsertionRules.DragPlan plan = ManualInsertionRules.planDrag(
@@ -1243,7 +1261,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     ManualRemoteDestination destination = manualDestinations.get(i);
                     int amount = plan.insertions().get(i);
                     if (amount <= 0) continue;
-                    int inserted = hasDirectSophisticated
+                    int inserted = hasDirectManualDestination
                             ? insertManualRemoteSlot(destination, carried, amount)
                             : insertRemoteSlot(destinations.get(i).handler(), destination.slot(), carried, amount);
                     distributionBudget -= inserted;
@@ -1256,7 +1274,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     int amount = plan.insertions().get(i);
                     if (amount <= 0) continue;
                     int requestedAmount = Math.min(amount, distributionBudget);
-                    int inserted = hasDirectSophisticated
+                    int inserted = hasDirectManualDestination
                             ? insertManualRemoteSlot(destination, carried, requestedAmount)
                             : insertRemoteSlot(destinations.get(i).handler(), destination.slot(),
                                     carried, requestedAmount);
@@ -1272,10 +1290,13 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private int insertManualRemoteSlot(ManualRemoteDestination destination, ItemStack carried, int requested) {
-        if (destination.directSophisticated()) {
-            int inserted = SophisticatedStorageManualClicks.insert(
-                    world, destination.adapter(), destination.slot(), carried, requested);
-            return Math.max(0, inserted);
+        if (supportsSophisticatedManualClick(destination.adapter(), destination.slot())) {
+            return Math.max(0, SophisticatedStorageManualClicks.insert(
+                    world, destination.adapter(), destination.slot(), carried, requested));
+        }
+        if (supportsStorageDrawersManualClick(destination.adapter(), destination.slot())) {
+            return Math.max(0, StorageDrawersManualClicks.insert(
+                    world, destination.adapter(), destination.slot(), carried, requested));
         }
         return insertRemoteSlot(destination.adapter().handler(), destination.slot(), carried, requested);
     }
@@ -1864,7 +1885,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     private record CraftingOutputInsertion(boolean inserted, ConnectedDestination remoteDestination) { }
     private record RemoteDestination(IItemHandler handler, int slot) { }
     private record ManualRemoteDestination(
-            InventoryAdapter adapter, int slot, boolean directSophisticated, int capacity) { }
+            InventoryAdapter adapter, int slot, boolean directManual, int capacity) { }
 
     private void depositIntoConnections(ItemStack stack, boolean storageOnly) {
         if (!(entity instanceof ServerPlayer player) || stack.isEmpty()) return;

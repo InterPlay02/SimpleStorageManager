@@ -25,22 +25,19 @@ public final class ManualInsertionRules {
             insertions.add(inserted);
             remaining -= inserted;
         }
-        if (!rightClick && remaining > 0
-                && slotCapacities.stream().anyMatch(capacity -> capacity > 0 && capacity < leftClickShare)) {
-            for (int i = 0; i < slotCapacities.size() && remaining > 0; i++) {
-                int capacity = Math.max(0, slotCapacities.get(i));
-                int additional = Math.min(remaining, capacity - insertions.get(i));
-                if (additional > 0) {
-                    insertions.set(i, insertions.get(i) + additional);
-                    remaining -= additional;
-                }
-            }
-        }
         return new DragPlan(List.copyOf(insertions), remaining);
     }
 
     public static int acceptedCount(int offeredCount, int remainderCount) {
         return Math.max(0, Math.min(Math.max(0, offeredCount), offeredCount - remainderCount));
+    }
+
+    public static int availableCapacity(int maxCount, int storedCount, int requestedCount) {
+        return Math.min(remainingCapacity(maxCount, storedCount), Math.max(0, requestedCount));
+    }
+
+    public static int remainingCapacity(int maxCount, int storedCount) {
+        return Math.max(0, maxCount - Math.max(0, storedCount));
     }
 
     public record DragPlan(List<Integer> insertions, int remainingCount) {

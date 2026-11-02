@@ -30,12 +30,36 @@ class ManualInsertionRulesTest {
     }
 
     @Test
-    void leftDragRedistributesWhenASlotHasLimitedCapacity() {
+    void leftDragLeavesCapacityShortfallOnTheCursor() {
         ManualInsertionRules.DragPlan plan = ManualInsertionRules.planDrag(
                 9, List.of(1, 20), false);
-        assertEquals(List.of(1, 8), plan.insertions());
-        assertEquals(0, plan.remainingCount());
+        assertEquals(List.of(1, 4), plan.insertions());
+        assertEquals(4, plan.remainingCount());
         assertEquals(9, plan.insertions().stream().mapToInt(Integer::intValue).sum() + plan.remainingCount());
+    }
+
+    @Test
+    void leftDragDividesAcrossFourAcceptingSlots() {
+        ManualInsertionRules.DragPlan plan = ManualInsertionRules.planDrag(
+                64, List.of(64, 64, 64, 64), false);
+        assertEquals(List.of(16, 16, 16, 16), plan.insertions());
+        assertEquals(0, plan.remainingCount());
+    }
+
+    @Test
+    void leftDragSkipsIncompatibleSlotsAndLeavesRemainder() {
+        ManualInsertionRules.DragPlan plan = ManualInsertionRules.planDrag(
+                64, List.of(64, 64, 64, 0), false);
+        assertEquals(List.of(21, 21, 21, 0), plan.insertions());
+        assertEquals(1, plan.remainingCount());
+    }
+
+    @Test
+    void rightDragInsertsOneIntoEachAcceptingSlot() {
+        ManualInsertionRules.DragPlan plan = ManualInsertionRules.planDrag(
+                4, List.of(0, 10, 10, 10), true);
+        assertEquals(List.of(0, 1, 1, 1), plan.insertions());
+        assertEquals(1, plan.remainingCount());
     }
 
     @Test
@@ -51,5 +75,13 @@ class ManualInsertionRulesTest {
         int cursorAfter = cursorBefore - actuallyAccepted;
         int slotAfter = slotBefore + actuallyAccepted;
         assertEquals(cursorBefore + slotBefore, cursorAfter + slotAfter);
+    }
+
+    @Test
+    void capacityIsLimitedByTheMeasuredDrawerCount() {
+        assertEquals(12, ManualInsertionRules.availableCapacity(20, 8, 12));
+        assertEquals(0, ManualInsertionRules.availableCapacity(20, 20, 12));
+        assertEquals(0, ManualInsertionRules.availableCapacity(20, 22, 12));
+        assertEquals(5, ManualInsertionRules.availableCapacity(20, 8, 5));
     }
 }
