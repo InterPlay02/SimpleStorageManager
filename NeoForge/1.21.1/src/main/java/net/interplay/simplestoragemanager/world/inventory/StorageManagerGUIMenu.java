@@ -1123,7 +1123,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private boolean supportsSophisticatedManualClick(InventoryAdapter adapter, int slot) {
-        return ModList.get().isLoaded("sophisticatedstorage")
+        return (ModList.get().isLoaded("sophisticatedstorage")
+                || ModList.get().isLoaded("sophisticatedbackpacks"))
                 && SophisticatedStorageManualClicks.supports(world, adapter, slot);
     }
 
