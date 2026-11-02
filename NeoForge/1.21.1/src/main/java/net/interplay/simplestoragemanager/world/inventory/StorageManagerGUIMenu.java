@@ -39,6 +39,7 @@ import net.interplay.simplestoragemanager.item.inventory.StorageManagerInventory
 import net.interplay.simplestoragemanager.logic.StorageSearch;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
 import net.interplay.simplestoragemanager.logic.ManualInsertionRules;
+import net.interplay.simplestoragemanager.logic.ManualExtractionRules;
 import net.interplay.simplestoragemanager.logic.UpgradeSlotRules;
 import net.interplay.simplestoragemanager.logic.UpgradeAccessRules;
 import net.interplay.simplestoragemanager.logic.TerminalOwnershipRules;
@@ -1025,8 +1026,9 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (carried.isEmpty()) {
             ItemStack existing = handler.getStackInSlot(slot);
             if (existing.isEmpty()) return 0;
-            int amount = TerminalInsertionRules.extractionCount(
-                    existing.getCount(), existing.getMaxStackSize(), button == 1);
+            int amount = button == 1
+                    ? ManualExtractionRules.rightClickAmount(existing.getCount(), existing.getMaxStackSize())
+                    : TerminalInsertionRules.extractionCount(existing.getCount(), existing.getMaxStackSize(), false);
             int cursorCapacity = existing.getMaxStackSize();
             int extractedCount = Math.min(amount, cursorCapacity);
             ItemStack extracted = extractRemoteSlot(handler, slot, extractedCount);
