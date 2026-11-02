@@ -45,7 +45,18 @@ tasks.withType(JavaCompile).configureEach {
 
 apply from: 'mcreator.gradle'
 
+repositories {
+    maven {
+        url = 'https://api.modrinth.com/maven'
+    }
+}
+
 dependencies {
+    compileOnly "maven.modrinth:sophisticated-core:1.21.1-${sophisticated_core_version}"
+    compileOnly "maven.modrinth:sophisticated-storage:1.21.1-${sophisticated_storage_version}"
+    compileOnly "maven.modrinth:sophisticated-backpacks:1.21.1-${sophisticated_backpacks_version}"
+    compileOnly "maven.modrinth:storagedrawers:${storagedrawers_version}"
+
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }

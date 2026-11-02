@@ -12,7 +12,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.items.IItemHandler;
+import net.neoforged.fml.ModList;
 import net.interplay.simplestoragemanager.data.TerminalConnection;
+import net.interplay.simplestoragemanager.integration.StorageDrawersManualClicks;
 import net.interplay.simplestoragemanager.world.TerminalSavedData;
 
 /** A live server-side view over one inventory structure. */
@@ -60,6 +62,10 @@ public final class InventoryAdapter {
         }
 
         IItemHandler exposed = anchorHandler;
+        if (ModList.get().isLoaded("storagedrawers")) {
+            exposed = StorageDrawersManualClicks.stabilize(
+                    level, connection.pos(), connection.side(), exposed);
+        }
         BlockEntity anchorEntity = level.getBlockEntity(connection.pos());
         boolean storage = anchorEntity instanceof BaseContainerBlockEntity && !(anchorEntity instanceof AbstractFurnaceBlockEntity);
         BlockState state = level.getBlockState(connection.pos());

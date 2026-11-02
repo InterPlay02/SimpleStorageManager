@@ -8,6 +8,7 @@ import com.jaquadro.minecraft.storagedrawers.capabilities.PlatformDrawerItemHand
 import net.interplay.simplestoragemanager.access.InventoryAdapter;
 import net.interplay.simplestoragemanager.logic.ManualInsertionRules;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -18,9 +19,13 @@ public final class StorageDrawersManualClicks {
     public static final int UNSUPPORTED = -1;
     private static final int VIRTUAL_SLOT = 0;
     private static final int FIRST_PHYSICAL_SLOT = 1;
-    private static final int SINGLE_ITEM_COUNT = 1;
 
     private StorageDrawersManualClicks() {
+    }
+
+    public static IItemHandler stabilize(Level level, BlockPos position, Direction side, IItemHandler handler) {
+        return handler instanceof PlatformDrawerItemHandler
+                ? new StorageDrawersStableItemHandler(level, position, side) : handler;
     }
 
     public static boolean supports(Level level, InventoryAdapter adapter, int slot) {
@@ -50,7 +55,7 @@ public final class StorageDrawersManualClicks {
         if (offered <= 0) return 0;
 
         if (drawer.isEmpty()) {
-            drawer = drawer.setStoredItem(carried.copyWithCount(SINGLE_ITEM_COUNT));
+            drawer = drawer.setStoredItem(carried);
             if (drawer.isEmpty()
                     || !ItemStack.isSameItemSameComponents(drawer.getStoredItemPrototype(), carried)) return 0;
         }
@@ -81,11 +86,11 @@ public final class StorageDrawersManualClicks {
                 || slot < 0 || slot >= adapter.getSlots()) return null;
 
         IItemHandler exposed = adapter.handler();
-        if (!(exposed instanceof PlatformDrawerItemHandler)
-                || adapter.connection().members().stream().noneMatch(level::isLoaded)) return null;
-
         BlockPos position = adapter.connection().pos();
-        if (!level.isLoaded(position)) return null;
+        if (!(exposed instanceof StorageDrawersStableItemHandler stableHandler)
+                || !stableHandler.matches(level, position, adapter.connection().side())
+                || !level.isLoaded(position)
+                || adapter.connection().members().stream().anyMatch(member -> !level.isLoaded(member))) return null;
         BlockEntity blockEntity = level.getBlockEntity(position);
         if (!(blockEntity instanceof BlockEntityDrawers drawers)) return null;
 
@@ -93,7 +98,6 @@ public final class StorageDrawersManualClicks {
                 Capabilities.ItemHandler.BLOCK, position, adapter.connection().side());
         IDrawerGroup group = BlockEntityDrawers.getGroup(drawers);
         if (!(current instanceof PlatformDrawerItemHandler) || group == null || !group.isGroupValid()
-                || current.getSlots() != exposed.getSlots()
                 || current.getSlots() != group.getDrawerCount() + FIRST_PHYSICAL_SLOT
                 || slot == VIRTUAL_SLOT && slot >= current.getSlots()) return null;
 
@@ -102,10 +106,9 @@ public final class StorageDrawersManualClicks {
     }
 
     private static DrawerSlot resolveDrawerSlot(IDrawerGroup group, int slot) {
-        int orderedIndex = slot - FIRST_PHYSICAL_SLOT;
-        int[] order = group.getAccessibleDrawerSlots();
-        if (orderedIndex < 0 || orderedIndex >= order.length) return null;
-        IDrawer drawer = group.getDrawer(order[orderedIndex]);
+        int physicalIndex = slot - FIRST_PHYSICAL_SLOT;
+        if (physicalIndex < 0 || physicalIndex >= group.getDrawerCount()) return null;
+        IDrawer drawer = group.getDrawer(physicalIndex);
         return drawer == null ? null : new DrawerSlot(drawer);
     }
 
