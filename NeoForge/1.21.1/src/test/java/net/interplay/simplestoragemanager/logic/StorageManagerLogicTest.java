@@ -18,6 +18,22 @@ class StorageManagerLogicTest {
         assertTrue(TerminalInsertionRules.acceptsSlot(true, false, 1));
         assertFalse(TerminalInsertionRules.acceptsSlot(false, true, 1));
         assertEquals(108, TerminalInsertionRules.previewCapacity(20, 128));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(16, 64, 16));
+        assertEquals(1, TerminalInsertionRules.previewCapacity(15, 64, 16));
+        assertEquals(8, TerminalInsertionRules.previewCapacity(8, 20, 16));
+        assertEquals(108, TerminalInsertionRules.previewCapacity(20, 128, 16));
+        assertEquals(1, TerminalInsertionRules.previewCapacity(127, 128, 1));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(64, 64, 64));
+        int partialSlotCount = 70;
+        for (int pile = 0; pile < 2; pile++) {
+            partialSlotCount += Math.min(64,
+                    TerminalInsertionRules.previewCapacity(partialSlotCount, 128, 64));
+        }
+        assertEquals(128, partialSlotCount);
+        assertEquals(64, TerminalInsertionRules.creativeCopyLimit(64, 4096));
+        assertEquals(512, TerminalInsertionRules.creativeCopyLimit(1024, 512));
+        assertEquals(1, TerminalInsertionRules.creativeCopyLimit(64, 1));
+        assertEquals(0, TerminalInsertionRules.creativeCopyLimit(64, 0));
         assertEquals(64, TerminalInsertionRules.extractionCount(128, 64, false));
         assertEquals(32, TerminalInsertionRules.extractionCount(128, 64, true));
         assertEquals(8, TerminalInsertionRules.extractionCount(50, 16, true));
@@ -58,6 +74,12 @@ class StorageManagerLogicTest {
     void craftingAndClearButtonCoordinatesMatchBothGuiVariants() {
         assertEquals(8, TerminalScreenLayout.BUTTON_SIZE);
         assertEquals(10, TerminalScreenLayout.ALERT_ICON_SIZE);
+        assertEquals(104, TerminalScreenLayout.SMALL.searchArea().left());
+        assertEquals(192, TerminalScreenLayout.SMALL.searchArea().right());
+        assertEquals(89, TerminalScreenLayout.SMALL.searchArea().width());
+        assertEquals(104, TerminalScreenLayout.BIG.searchArea().left());
+        assertEquals(192, TerminalScreenLayout.BIG.searchArea().right());
+        assertEquals(89, TerminalScreenLayout.BIG.searchArea().width());
         assertEquals(new TerminalScreenLayout.Point(103, 80), TerminalScreenLayout.SMALL.craftOrigin());
         assertEquals(new TerminalScreenLayout.Point(175, 98), TerminalScreenLayout.SMALL.result());
         assertEquals(new TerminalScreenLayout.Point(156, 70), TerminalScreenLayout.SMALL.cross());

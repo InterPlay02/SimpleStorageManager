@@ -20,6 +20,8 @@ import net.interplay.simplestoragemanager.access.ConnectionStatus;
 import net.interplay.simplestoragemanager.network.TerminalNoticeDismissPayload;
 import net.interplay.simplestoragemanager.network.TerminalClearCraftingPayload;
 import net.interplay.simplestoragemanager.network.TerminalStorageClickPayload;
+import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewPayload;
+import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewRequestPayload;
 import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
 import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
@@ -36,6 +38,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageManagerGUIMenu>
         implements SimplestoragemanagerModScreens.ScreenAccessor {
@@ -73,6 +76,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private TerminalViewPayload view = new TerminalViewPayload(false, 0, 0, List.of(), List.of(), List.of());
     private final Map<Long, ItemStack> remoteItems = new HashMap<>();
     private final Map<Long, Integer> remoteSlotLimits = new HashMap<>();
+    private final Map<Long, UUID> remoteConnectionIds = new HashMap<>();
+    private final Map<Long, Integer> remoteStorageSlots = new HashMap<>();
     private RemoteHit hoveredRemote;
     private boolean hoveredUnavailableIcon;
     private boolean hoveredNoticeDismiss;
@@ -93,6 +98,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private long nextOperationSequence;
     private long pendingOperationSequence;
     private long lastAppliedOperationSequence;
+    private long nextShiftPreviewRequestId;
+    private long latestShiftPreviewRequestId;
+    private long appliedShiftPreviewRequestId;
+    private boolean shiftDragCommitPending;
 
     public StorageManagerGUIScreen(StorageManagerGUIMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -137,13 +146,19 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 || payload.operationSequence() < lastAppliedOperationSequence) return;
         if (pendingOperationSequence > 0 && payload.operationSequence() == pendingOperationSequence
                 && payload.playerSlots().isEmpty()) return;
+        if (itemDragShift || shiftDragCommitPending) cancelPendingShiftDrag();
         view = payload;
         lastAppliedOperationSequence = Math.max(lastAppliedOperationSequence, payload.operationSequence());
         remoteItems.clear();
         remoteSlotLimits.clear();
+        remoteConnectionIds.clear();
+        remoteStorageSlots.clear();
         for (TerminalViewPayload.VisibleSlot slot : payload.visibleSlots()) {
-            remoteItems.put(key(slot.section(), slot.slot()), slot.stack());
-            remoteSlotLimits.put(key(slot.section(), slot.slot()), slot.slotLimit());
+            long slotKey = key(slot.section(), slot.slot());
+            remoteItems.put(slotKey, slot.stack());
+            remoteSlotLimits.put(slotKey, slot.slotLimit());
+            remoteConnectionIds.put(slotKey, slot.connectionId());
+            remoteStorageSlots.put(slotKey, slot.storageSlot());
         }
         applyOriginSlotLimits(payload);
         if (pendingOperationSequence > 0 && payload.operationSequence() >= pendingOperationSequence
@@ -169,6 +184,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     }
 
     public void applyConnectionStatus(TerminalConnectionStatusPayload payload) {
+        if (itemDragShift || shiftDragCommitPending) cancelPendingShiftDrag();
         int sectionIndex = payload.section();
         if (sectionIndex < 0 || sectionIndex >= view.sections().size()) {
             if (payload.refreshView()) requestView(view.scrollOffset());
@@ -188,9 +204,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 view.operationSequence(), view.playerSlots(), view.canMutateInventories());
         remoteItems.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteSlotLimits.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
+        remoteConnectionIds.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
+        remoteStorageSlots.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         for (TerminalViewPayload.VisibleSlot slot : payload.visibleSlots()) {
-            remoteItems.put(key(slot.section(), slot.slot()), slot.stack());
-            remoteSlotLimits.put(key(slot.section(), slot.slot()), slot.slotLimit());
+            long slotKey = key(slot.section(), slot.slot());
+            remoteItems.put(slotKey, slot.stack());
+            remoteSlotLimits.put(slotKey, slot.slotLimit());
+            remoteConnectionIds.put(slotKey, slot.connectionId());
+            remoteStorageSlots.put(slotKey, slot.storageSlot());
         }
         applyOriginSlotLimits(view);
         if (payload.refreshView()) requestView(view.scrollOffset());
@@ -492,6 +513,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (!isInside(variant.searchArea(), mouseX, mouseY) && searchBar != null && searchBar.isFocused()) {
+            setFocused(null);
+        }
         if (pendingOperationSequence > 0 && button == 0 && hasShiftDown()) return true;
         if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
             if (button == 0) PacketDistributor.sendToServer(new TerminalLockTogglePayload());
@@ -672,157 +696,39 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private void updateShiftPreview() {
         playerPreviewItems.clear();
         remotePreviewItems.clear();
-        for (int index = menu.mainInventoryStart; index < menu.hotbarStart + 9; index++) {
-            playerPreviewItems.put(index, menu.slots.get(index).getItem().copy());
-        }
-        for (int index : itemDragSlots) {
-            if (index < 0 || index >= menu.slots.size() || index == menu.craftingResultIndex
-                    || menu.isTerminalSlot(index)) continue;
-            playerPreviewItems.putIfAbsent(index, menu.slots.get(index).getItem().copy());
-        }
-        List<Integer> originCounts = view.originTargets().stream()
-                .map(TerminalViewPayload.OriginTarget::count).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-        for (int index : itemDragSlots) {
-            if (index == menu.craftingResultIndex || menu.isTerminalSlot(index)) continue;
-            ItemStack moving = playerPreviewItems.getOrDefault(index,
-                    menu.slots.get(index).getItem()).copy();
-            if (moving.isEmpty()) continue;
-            if (menu.isOutsidePlayerInventorySlot(index)) {
-                if (!insertPreviewWholeStackIntoPlayerInventory(moving)) {
-                    insertPreviewIntoFirstEmptyRemote(moving);
+        latestShiftPreviewRequestId = ++nextShiftPreviewRequestId;
+        PacketDistributor.sendToServer(new TerminalShiftDragPreviewRequestPayload(
+                latestShiftPreviewRequestId, List.copyOf(itemDragSlots)));
+    }
+
+    public void applyShiftDragPreview(TerminalShiftDragPreviewPayload payload) {
+        if ((!itemDragShift && !shiftDragCommitPending)
+                || payload.requestId() != latestShiftPreviewRequestId) return;
+        appliedShiftPreviewRequestId = payload.requestId();
+        playerPreviewItems.clear();
+        remotePreviewItems.clear();
+        if (payload.complete()) {
+            for (TerminalShiftDragPreviewPayload.RemoteResult destination : payload.destinations()) {
+                long slotKey = key(destination.section(), destination.slot());
+                if (!destination.connectionId().equals(remoteConnectionIds.get(slotKey))
+                        || destination.storageSlot() != remoteStorageSlots.getOrDefault(slotKey, -1)) {
+                    cancelPendingShiftDrag();
+                    requestView(view.scrollOffset());
+                    return;
                 }
-                playerPreviewItems.put(index, moving);
-                continue;
             }
-            if (!menu.isPlayerInventorySlot(index)) continue;
-            boolean hasOrigin = view.originTargets().stream().anyMatch(origin ->
-                    origin.count() > 0 && ItemStack.isSameItemSameComponents(origin.item(), moving));
-            boolean lockedWithoutOrigin = view.locked() && !hasOrigin;
-            if (view.locked() && hasOrigin) insertPreviewIntoOrigins(moving, originCounts);
-            insertPreviewIntoRemote(moving, lockedWithoutOrigin);
-            playerPreviewItems.put(index, moving);
-        }
-    }
-
-    private boolean insertPreviewWholeStackIntoPlayerInventory(ItemStack moving) {
-        return insertPreviewWholeStackIntoPlayerRange(moving, menu.mainInventoryStart, menu.hotbarStart)
-                || insertPreviewWholeStackIntoPlayerRange(moving, menu.hotbarStart, menu.hotbarStart + 9);
-    }
-
-    private boolean insertPreviewWholeStackIntoPlayerRange(ItemStack moving, int start, int end) {
-        for (int index = start; index < end; index++) {
-            Slot destination = menu.slots.get(index);
-            if (!destination.mayPlace(moving)) continue;
-            ItemStack existing = playerPreviewItems.getOrDefault(index, destination.getItem());
-            if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, moving)) continue;
-            int currentCount = existing.isEmpty() ? 0 : existing.getCount();
-            int limit = Math.min(moving.getMaxStackSize(), destination.getMaxStackSize(moving));
-            if (limit - currentCount < moving.getCount()) continue;
-            playerPreviewItems.put(index, existing.isEmpty() ? moving.copy()
-                    : existing.copyWithCount(currentCount + moving.getCount()));
-            moving.setCount(0);
-            return true;
-        }
-        return false;
-    }
-
-    private void insertPreviewIntoFirstEmptyRemote(ItemStack moving) {
-        for (int sectionIndex = 0; sectionIndex < view.sections().size(); sectionIndex++) {
-            TerminalViewPayload.Section section = view.sections().get(sectionIndex);
-            if (section.connectionStatus() != ConnectionStatus.AVAILABLE) continue;
-            for (int slot = 0; slot < section.slotCount(); slot++) {
-                long slotKey = key(sectionIndex, slot);
-                ItemStack existing = remotePreviewItems.getOrDefault(slotKey,
-                        remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
-                if (!existing.isEmpty()
-                        || remoteSlotLimit(slotKey, moving) < moving.getCount()) continue;
-                remotePreviewItems.put(slotKey, moving.copy());
-                moving.setCount(0);
-                return;
+            for (TerminalShiftDragPreviewPayload.SourceResult source : payload.sources()) {
+                if (source.menuSlot() >= 0 && source.menuSlot() < menu.slots.size()) {
+                    playerPreviewItems.put(source.menuSlot(), source.remaining());
+                }
+            }
+            for (TerminalShiftDragPreviewPayload.RemoteResult destination : payload.destinations()) {
+                remotePreviewItems.put(key(destination.section(), destination.slot()), destination.stack());
             }
         }
-    }
-
-    private void insertPreviewIntoRemote(ItemStack moving) {
-        insertPreviewIntoRemote(moving, false);
-    }
-
-    private void insertPreviewIntoRemote(ItemStack moving, boolean emptySlotsOnly) {
-        int firstPass = emptySlotsOnly ? 1 : 0;
-        for (int pass = firstPass; pass < TerminalInsertionRules.PASS_COUNT && !moving.isEmpty(); pass++) {
-            insertPreviewIntoRemote(moving, pass);
+        if (shiftDragCommitPending) {
+            sendShiftDragCommit();
         }
-    }
-
-    private void insertPreviewIntoRemote(ItemStack moving, int pass) {
-        for (int sectionIndex = 0; sectionIndex < view.sections().size() && !moving.isEmpty(); sectionIndex++) {
-            TerminalViewPayload.Section section = view.sections().get(sectionIndex);
-            if (section.connectionStatus() != ConnectionStatus.AVAILABLE) continue;
-            for (int slot = 0; slot < section.slotCount() && !moving.isEmpty(); slot++) {
-                long slotKey = key(sectionIndex, slot);
-                ItemStack present = remotePreviewItems.getOrDefault(slotKey,
-                        remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
-                if (!acceptsInsertionSlot(present, moving, pass)) continue;
-                int currentCount = present.isEmpty() ? 0 : present.getCount();
-                int amount = Math.min(moving.getCount(),
-                        insertionCapacity(present, remoteSlotLimit(slotKey, moving)));
-                if (amount <= 0) continue;
-                remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
-                        : present.copyWithCount(currentCount + amount));
-                moving.shrink(amount);
-            }
-        }
-    }
-
-    private void insertPreviewIntoOrigins(ItemStack moving, List<Integer> remainingCounts) {
-        List<TerminalViewPayload.OriginTarget> origins = view.originTargets();
-        for (int index = 0; index < origins.size() && !moving.isEmpty(); index++) {
-            TerminalViewPayload.OriginTarget origin = origins.get(index);
-            int requested = Math.min(moving.getCount(), remainingCounts.get(index));
-            if (requested <= 0 || !ItemStack.isSameItemSameComponents(origin.item(), moving)) continue;
-            if (origin.section() < 0 || origin.section() >= view.sections().size()
-                    || view.sections().get(origin.section()).connectionStatus() != ConnectionStatus.AVAILABLE) {
-                remainingCounts.set(index, 0);
-                return;
-            }
-            int inserted = insertPreviewIntoOrigin(moving, origin, requested);
-            moving.shrink(inserted);
-            remainingCounts.set(index, inserted < requested ? 0 : remainingCounts.get(index) - inserted);
-            if (inserted < requested) return;
-        }
-    }
-
-    private static boolean acceptsInsertionSlot(ItemStack existing, ItemStack incoming, int pass) {
-        boolean empty = existing.isEmpty();
-        boolean matches = !empty && ItemStack.isSameItemSameComponents(existing, incoming);
-        return TerminalInsertionRules.acceptsSlot(empty, matches, pass);
-    }
-
-    private static int insertionCapacity(ItemStack existing, int slotLimit) {
-        return TerminalInsertionRules.previewCapacity(existing.isEmpty() ? 0 : existing.getCount(), slotLimit);
-    }
-
-    private int insertPreviewIntoOrigin(ItemStack moving, TerminalViewPayload.OriginTarget origin, int requested) {
-        int sectionIndex = origin.section();
-        if (sectionIndex < 0 || sectionIndex >= view.sections().size()
-                || view.sections().get(sectionIndex).connectionStatus() != ConnectionStatus.AVAILABLE) return 0;
-        TerminalViewPayload.Section section = view.sections().get(sectionIndex);
-        int inserted = 0;
-        for (int pass = 0; pass < TerminalInsertionRules.PASS_COUNT && inserted < requested; pass++) {
-            for (int slot = 0; slot < section.slotCount() && inserted < requested; slot++) {
-                long slotKey = key(sectionIndex, slot);
-                ItemStack present = remotePreviewItems.getOrDefault(slotKey,
-                        remoteItems.getOrDefault(slotKey, ItemStack.EMPTY));
-                if (!acceptsInsertionSlot(present, moving, pass)) continue;
-                int capacity = insertionCapacity(present, remoteSlotLimit(slotKey, moving));
-                int amount = Math.min(requested - inserted, Math.min(moving.getCount() - inserted, capacity));
-                if (amount <= 0) continue;
-                remotePreviewItems.put(slotKey, present.isEmpty() ? moving.copyWithCount(amount)
-                        : present.copyWithCount(present.getCount() + amount));
-                inserted += amount;
-            }
-        }
-        return inserted;
     }
 
     private void finishItemDrag() {
@@ -831,9 +737,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         if (shiftOperation && pendingOperationSequence == 0) {
             pendingOperationSequence = ++nextOperationSequence;
         }
+        if (shiftOperation && !itemDragSlots.isEmpty()
+                && appliedShiftPreviewRequestId != latestShiftPreviewRequestId) {
+            shiftDragCommitPending = true;
+            itemDragButton = -1;
+            return;
+        }
         if (!itemDragSlots.isEmpty() && itemDragShift) {
-            PacketDistributor.sendToServer(new TerminalStorageClickPayload(-1, -1, 0, true,
-                    List.of(), List.copyOf(itemDragSlots), pendingOperationSequence));
+            sendShiftDragCommit();
         } else if (!itemDragSlots.isEmpty() && !itemDragCreative && itemDragMoved) {
             int type = remoteDragMode;
             minecraft.gameMode.handleInventoryMouseClick(menu.containerId, -999,
@@ -862,6 +773,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                         ? remoteDragTargets.get(0) : new TerminalStorageClickPayload.SlotTarget(-1, -1);
                 PacketDistributor.sendToServer(new TerminalStorageClickPayload(first.section(), first.slot(), 2,
                         false, List.copyOf(remoteDragTargets), List.copyOf(itemDragSlots)));
+            } else if (hasRemoteTargets) {
+                TerminalStorageClickPayload.SlotTarget target = remoteDragTargets.get(0);
+                PacketDistributor.sendToServer(new TerminalStorageClickPayload(
+                        target.section(), target.slot(), 2, false));
             }
         } else if (hasRemoteTargets) {
             TerminalStorageClickPayload.SlotTarget first = remoteDragTargets.get(0);
@@ -883,6 +798,39 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         remoteDragTargets.clear();
         remoteDragInitialCarried = ItemStack.EMPTY;
         if (!hasRemoteTargets && !shiftOperation) clearRemotePreview();
+    }
+
+    private void sendShiftDragCommit() {
+        PacketDistributor.sendToServer(new TerminalStorageClickPayload(-1, -1, 0, true,
+                List.of(), List.copyOf(itemDragSlots), pendingOperationSequence,
+                latestShiftPreviewRequestId));
+        shiftDragCommitPending = false;
+        itemDragButton = -1;
+        itemDragShift = false;
+        itemDragMoved = false;
+        itemDragCreative = false;
+        itemDragStartSlot = -1;
+        itemDragSlots.clear();
+        remoteDragMode = 0;
+        remoteDragShift = false;
+        remoteDragTargets.clear();
+        remoteDragInitialCarried = ItemStack.EMPTY;
+    }
+
+    private void cancelPendingShiftDrag() {
+        shiftDragCommitPending = false;
+        pendingOperationSequence = 0;
+        itemDragButton = -1;
+        itemDragShift = false;
+        itemDragMoved = false;
+        itemDragCreative = false;
+        itemDragStartSlot = -1;
+        itemDragSlots.clear();
+        remoteDragMode = 0;
+        remoteDragShift = false;
+        remoteDragTargets.clear();
+        remoteDragInitialCarried = ItemStack.EMPTY;
+        clearRemotePreview();
     }
 
     private void addRemoteDragTarget(RemoteHit hit) {

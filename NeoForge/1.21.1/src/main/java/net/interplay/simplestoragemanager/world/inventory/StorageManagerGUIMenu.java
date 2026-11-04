@@ -38,6 +38,8 @@ import net.interplay.simplestoragemanager.data.TerminalDataComponents;
 import net.interplay.simplestoragemanager.item.inventory.StorageManagerInventoryCapability;
 import net.interplay.simplestoragemanager.logic.StorageSearch;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
+import net.interplay.simplestoragemanager.logic.ShiftDragInsertionRules;
+import net.interplay.simplestoragemanager.logic.ShiftDragPlanner;
 import net.interplay.simplestoragemanager.logic.ManualInsertionRules;
 import net.interplay.simplestoragemanager.logic.ManualExtractionRules;
 import net.interplay.simplestoragemanager.logic.UpgradeSlotRules;
@@ -51,6 +53,8 @@ import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayloa
 import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
+import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewPayload;
+import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewRequestPayload;
 import net.interplay.simplestoragemanager.world.TerminalSavedData;
 import net.interplay.simplestoragemanager.world.TerminalOriginMemory;
 import net.interplay.simplestoragemanager.SimplestoragemanagerMod;
@@ -98,6 +102,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     private int passiveCheckTicks;
     private long lastOperationSequence;
     private long appliedOperationSequence;
+    private long latestShiftDragPreviewRequestId;
+    private ShiftDragSnapshot latestShiftDragPreviewSnapshot;
     private List<ServerSection> serverSections = List.of();
     private Map<TerminalConnection, ConnectionStatus> connectionStatuses = new HashMap<>();
     private TerminalViewPayload view = new TerminalViewPayload(false, 0, 0, List.of(), List.of(), List.of());
@@ -378,7 +384,12 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     continue;
                 }
                 if (!current.equals(connection)) {
+                    boolean retainedIdentity = false;
                     for (TerminalConnection rebuilt : MultiblockDiscovery.rediscover(target, current)) {
+                        if (!retainedIdentity) {
+                            rebuilt = rebuilt.withPersistentIdentity(current);
+                            retainedIdentity = true;
+                        }
                         InventoryAdapter.Resolution resolution = resolve(rebuilt);
                         if (resolution.status() == ConnectionStatus.AVAILABLE && resolution.adapter() != null) {
                             rebuilt = rebuilt.withSlotCount(resolution.adapter().getSlots());
@@ -399,7 +410,12 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             }
             if (!current.broken() && target != null) {
                 List<TerminalConnection> recalculated = MultiblockDiscovery.rediscover(target, current);
+                boolean retainedIdentity = false;
                 for (TerminalConnection rebuilt : recalculated) {
+                    if (!retainedIdentity) {
+                        rebuilt = rebuilt.withPersistentIdentity(current);
+                        retainedIdentity = true;
+                    }
                     InventoryAdapter.Resolution resolution = resolve(rebuilt);
                     if (resolution.status() == ConnectionStatus.AVAILABLE && resolution.adapter() != null) {
                         rebuilt = rebuilt.withSlotCount(resolution.adapter().getSlots());
@@ -447,7 +463,27 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         }
         ServerLevel target = targetLevel(connection);
         if (target == null) return new InventoryAdapter.Resolution(ConnectionStatus.DIMENSION_MISSING, null);
-        return InventoryAdapter.resolve(target, connection, entity, AccessRule.ALWAYS);
+        InventoryAdapter.Resolution resolution = InventoryAdapter.resolve(target, connection, entity, AccessRule.ALWAYS);
+        if (resolution.adapter() != null && resolution.adapter().implementationKind()
+                != connection.implementationKind()) {
+            UUID id = terminalId();
+            if (id != null) {
+                TerminalSavedData data = TerminalSavedData.get(target);
+                List<TerminalConnection> connections = new ArrayList<>(data.connections(id));
+                for (int i = 0; i < connections.size(); i++) {
+                    if (connections.get(i).connectionId().equals(connection.connectionId())) {
+                        if (connections.get(i).implementationKind()
+                                != resolution.adapter().implementationKind()) {
+                            connections.set(i, connections.get(i).withImplementationKind(
+                                    resolution.adapter().implementationKind()));
+                            data.putConnections(id, connections);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return resolution;
     }
 
     private ConnectionStatus basicAvailabilityStatus(TerminalConnection connection) {
@@ -547,8 +583,13 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         List<TerminalViewPayload.VisibleSlot> visible = new ArrayList<>(section.slotCount());
         for (int slot = 0; slot < section.slotCount(); slot++) {
             ItemStack stack = section.stackAt(slot);
+            TerminalConnection connection = section.searchResults().isEmpty()
+                    ? section.connection() : section.searchResults().get(slot).connection();
+            int storageSlot = section.searchResults().isEmpty()
+                    ? slot : section.searchResults().get(slot).slot();
             visible.add(new TerminalViewPayload.VisibleSlot(targetSection, slot, stack.copy(),
-                    section.slotLimitAt(slot, stack)));
+                    section.slotLimitAt(slot, stack),
+                    connection == null ? null : connection.connectionId(), storageSlot));
         }
         return visible;
     }
@@ -630,9 +671,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private boolean sameOriginConnection(TerminalConnection current, TerminalConnection origin) {
-        return current != null && origin != null
-                && current.dimension().equals(origin.dimension()) && current.pos().equals(origin.pos())
-                && java.util.Objects.equals(current.side(), origin.side());
+        return current != null && origin != null && current.connectionId().equals(origin.connectionId());
     }
 
     private int insertIntoOriginInventory(IItemHandler handler, ItemStack stack, int requested) {
@@ -701,8 +740,13 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     section.status().ordinal(), section.slotCount()));
             for (int slot = 0; slot < section.slotCount(); slot++) {
                 ItemStack stack = section.stackAt(slot);
+                TerminalConnection connection = section.searchResults().isEmpty()
+                        ? section.connection() : section.searchResults().get(slot).connection();
+                int storageSlot = section.searchResults().isEmpty()
+                        ? slot : section.searchResults().get(slot).slot();
                 visible.add(new TerminalViewPayload.VisibleSlot(index, slot, stack.copy(),
-                        section.slotLimitAt(slot, stack)));
+                        section.slotLimitAt(slot, stack),
+                        connection == null ? null : connection.connectionId(), storageSlot));
             }
             cursor = slotY + rows * SLOT_SIZE + 2 + 4;
         }
@@ -808,6 +852,44 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         refreshServerView(sequence > 0);
     }
 
+    public void handleShiftDragPreview(ServerPlayer player, TerminalShiftDragPreviewRequestPayload request) {
+        if (world.isClientSide || !stillValid(player) || request.requestId() < 0
+                || request.requestId() < latestShiftDragPreviewRequestId
+                || request.menuSlots().isEmpty() || request.menuSlots().size() > 256) return;
+        ShiftDragPlanResult result = buildShiftDragPlan(player, request.menuSlots());
+        latestShiftDragPreviewRequestId = request.requestId();
+        latestShiftDragPreviewSnapshot = result.complete() ? result.snapshot() : null;
+        if (!result.complete()) {
+            player.connection.send(new TerminalShiftDragPreviewPayload(
+                    request.requestId(), false, List.of(), List.of()));
+            return;
+        }
+        List<TerminalShiftDragPreviewPayload.SourceResult> sources = new ArrayList<>();
+        for (ShiftDragPlanner.SourceResult source : result.plan().sources()) {
+            ItemStack initial = result.sourceStacks().get(source.menuSlot());
+            ItemStack remaining = source.remaining() <= 0
+                    ? ItemStack.EMPTY : initial.copyWithCount(source.remaining());
+            sources.add(new TerminalShiftDragPreviewPayload.SourceResult(source.menuSlot(), remaining));
+        }
+        List<TerminalShiftDragPreviewPayload.RemoteResult> destinations = new ArrayList<>();
+        for (ShiftDragPlanner.DestinationResult destination : result.plan().destinations()) {
+            PreviewTarget target = result.targets().get(destinationKey(destination.section(), destination.slot()));
+            if (target == null) continue;
+            ItemStack initial = target.adapter().handler().getStackInSlot(target.handlerSlot());
+            ItemStack planned = destination.count() <= 0 ? ItemStack.EMPTY
+                    : destination.itemType() >= 0
+                    ? result.itemTypes().get(destination.itemType()).copyWithCount(destination.count())
+                    : initial.copyWithCount(destination.count());
+            if (!ItemStack.matches(initial, planned)) {
+                destinations.add(new TerminalShiftDragPreviewPayload.RemoteResult(
+                        destination.section(), destination.slot(),
+                        target.adapter().connection().connectionId(), target.handlerSlot(), planned));
+            }
+        }
+        player.connection.send(new TerminalShiftDragPreviewPayload(
+                request.requestId(), true, sources, destinations));
+    }
+
     private void handleStorageClickValidated(ServerPlayer player, TerminalStorageClickPayload click) {
         if (click.button() < 0 || click.button() > 2 || click.menuDragSlots().size() > 256
                 || click.dragTargets().size() > 256 || click.shift() && click.button() != 0) return;
@@ -822,7 +904,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                         || !canUseConnectedInventories(player, true)) return;
             }
             if (menuDrag) {
-                if (click.shift()) handleMenuShiftDrag(player, click.menuDragSlots());
+                if (click.shift()) handleMenuShiftDrag(player, click.menuDragSlots(),
+                        click.shiftDragPreviewRequestId());
                 else handleCreativeMenuDrag(player, click.menuDragSlots());
             }
             if (remoteDrag) {
@@ -868,7 +951,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             if (isTerminalSlot(index) || !canDragTo(slot) || !slot.mayPlace(carried)) continue;
             ItemStack existing = slot.getItem();
             if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, carried)) continue;
-            int count = Math.min(carried.getCount(), slot.getMaxStackSize(carried));
+            int count = Math.min(carried.getCount(), TerminalInsertionRules.creativeCopyLimit(
+                    carried.getMaxStackSize(), slot.getMaxStackSize(carried)));
             if (count <= (existing.isEmpty() ? 0 : existing.getCount())) continue;
             slot.setByPlayer(carried.copyWithCount(count));
             slot.setChanged();
@@ -876,7 +960,25 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     // Shift-drag returns to remembered origins first, then uses one remote target per item type.
-    private void handleMenuShiftDrag(ServerPlayer player, List<Integer> dragSlots) {
+    private void handleMenuShiftDrag(ServerPlayer player, List<Integer> dragSlots, long previewRequestId) {
+        boolean playerInventoryDrag = !dragSlots.isEmpty()
+                && dragSlots.stream().allMatch(this::isPlayerInventorySlot);
+        if (playerInventoryDrag) {
+            if (!canUseConnectedInventories(player, true)) return;
+            ShiftDragPlanResult plan = buildShiftDragPlan(player, dragSlots);
+            if (plan.complete()) {
+                if (previewRequestId > 0 && (previewRequestId != latestShiftDragPreviewRequestId
+                        || latestShiftDragPreviewSnapshot == null
+                        || !latestShiftDragPreviewSnapshot.matches(plan.snapshot()))) return;
+                executeShiftDragPlan(player, plan);
+                return;
+            }
+            if (previewRequestId > 0) {
+                player.displayClientMessage(Component.translatable(
+                        "message.simplestoragemanager.shift_drag_preview_unavailable"), true);
+                return;
+            }
+        }
         boolean canDepositPlayerItems = canUseConnectedInventories(player, true);
         UUID id = terminalId();
         List<TerminalConnection> connections = id == null ? List.of()
@@ -933,6 +1035,289 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             }
         }
         return destinations;
+    }
+
+    private ShiftDragPlanResult buildShiftDragPlan(ServerPlayer player, List<Integer> dragSlots) {
+        List<Integer> orderedSources = new ArrayList<>();
+        Set<Integer> seen = new HashSet<>();
+        Map<Integer, ItemStack> sourceStacks = new HashMap<>();
+        List<ItemStack> itemTypes = new ArrayList<>();
+        for (int index : dragSlots) {
+            if (orderedSources.size() >= 256 || !seen.add(index)) continue;
+            if (!isPlayerInventorySlot(index)) return ShiftDragPlanResult.incomplete();
+            ItemStack stack = slots.get(index).getItem().copy();
+            orderedSources.add(index);
+            sourceStacks.put(index, stack);
+            if (!stack.isEmpty()) findOrAddItemType(itemTypes, stack);
+        }
+        if (orderedSources.isEmpty()) return ShiftDragPlanResult.incomplete();
+
+        UUID id = terminalId();
+        boolean locked = inventoryLockEnabled(player);
+        List<TerminalOriginMemory.OriginRecord> originRecords = id == null
+                ? List.of() : TerminalOriginMemory.records(player, id);
+        if (locked && !search.isBlank() && orderedSources.stream()
+                .map(sourceStacks::get).filter(stack -> !stack.isEmpty())
+                .anyMatch(stack -> originRecords.stream().anyMatch(record ->
+                        ItemStack.isSameItemSameComponents(record.item(), stack)))) {
+            return ShiftDragPlanResult.incomplete();
+        }
+
+        List<PreviewTarget> previewTargets = canUseConnectedInventories(player, false)
+                ? shiftDragPreviewTargets() : List.of();
+        Map<Long, PreviewTarget> targetsByKey = new HashMap<>();
+        for (PreviewTarget target : previewTargets) {
+            targetsByKey.put(destinationKey(target.section(), target.slot()), target);
+        }
+
+        Map<Integer, List<TerminalOriginMemory.OriginRecord>> recordsByType = new HashMap<>();
+        for (int sourceSlot : orderedSources) {
+            ItemStack source = sourceStacks.get(sourceSlot);
+            if (source.isEmpty()) continue;
+            int type = findItemType(itemTypes, source);
+            recordsByType.computeIfAbsent(type, ignored -> originRecords.stream()
+                    .filter(record -> ItemStack.isSameItemSameComponents(record.item(), source))
+                    .toList());
+        }
+
+        List<ShiftDragPlanner.Source> plannerSources = new ArrayList<>();
+        List<SourceSnapshot> sourceSnapshots = new ArrayList<>();
+        for (int sourceSlot : orderedSources) {
+            ItemStack source = sourceStacks.get(sourceSlot);
+            sourceSnapshots.add(new SourceSnapshot(sourceSlot, source.copy()));
+            int type = source.isEmpty() ? -1 : findItemType(itemTypes, source);
+            List<TerminalOriginMemory.OriginRecord> matchingOrigins =
+                    recordsByType.getOrDefault(type, List.of());
+            int originBudget = matchingOrigins.stream()
+                    .mapToInt(TerminalOriginMemory.OriginRecord::remaining).sum();
+            plannerSources.add(new ShiftDragPlanner.Source(sourceSlot, type,
+                    source.isEmpty() ? 0 : source.getCount(),
+                    locked && matchingOrigins.isEmpty(), locked ? originBudget : 0));
+        }
+
+        List<ShiftDragPlanner.Destination> plannerDestinations = new ArrayList<>();
+        List<DestinationSnapshot> destinationSnapshots = new ArrayList<>();
+        for (PreviewTarget target : previewTargets) {
+            IItemHandler handler = target.adapter().handler();
+            ItemStack existing = handler.getStackInSlot(target.handlerSlot()).copy();
+            destinationSnapshots.add(new DestinationSnapshot(target.section(), target.slot(),
+                    target.adapter().connection().connectionId(), target.handlerSlot(), existing,
+                    handler.getSlotLimit(target.handlerSlot()), target.adapter().implementationKind()));
+            int existingType = existing.isEmpty() ? -1 : findItemType(itemTypes, existing);
+            if (existingType < 0 && !existing.isEmpty()) existingType = -2;
+            Set<Integer> originTypes = new HashSet<>();
+            Map<Integer, Integer> originOrder = new HashMap<>();
+            for (Map.Entry<Integer, List<TerminalOriginMemory.OriginRecord>> entry : recordsByType.entrySet()) {
+                List<TerminalConnection> originConnections = new ArrayList<>();
+                for (TerminalOriginMemory.OriginRecord record : entry.getValue()) {
+                    if (originConnections.stream().noneMatch(connection ->
+                            sameOriginConnection(connection, record.connection()))) {
+                        originConnections.add(record.connection());
+                    }
+                }
+                for (int originIndex = 0; originIndex < originConnections.size(); originIndex++) {
+                    if (sameOriginConnection(target.adapter().connection(), originConnections.get(originIndex))) {
+                        originTypes.add(entry.getKey());
+                        originOrder.put(entry.getKey(), originIndex);
+                        break;
+                    }
+                }
+            }
+            Map<Integer, Integer> maxCounts = new HashMap<>();
+            for (int type = 0; type < itemTypes.size(); type++) {
+                ItemStack incoming = itemTypes.get(type);
+                if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, incoming)) continue;
+                maxCounts.put(type, simulatedShiftDragTotalLimit(target, existing, incoming));
+            }
+            plannerDestinations.add(new ShiftDragPlanner.Destination(target.section(), target.slot(),
+                    existingType, existing.isEmpty() ? 0 : existing.getCount(),
+                    originTypes, originOrder, maxCounts));
+        }
+        ShiftDragPlanner.Plan plan = ShiftDragPlanner.plan(plannerSources, plannerDestinations);
+        ShiftDragSnapshot snapshot = new ShiftDragSnapshot(sourceSnapshots, destinationSnapshots, plan);
+        return new ShiftDragPlanResult(true, plan, targetsByKey, sourceStacks, itemTypes, snapshot);
+    }
+
+    private List<PreviewTarget> shiftDragPreviewTargets() {
+        List<PreviewTarget> targets = new ArrayList<>();
+        Map<UUID, InventoryAdapter> resolved = new HashMap<>();
+        for (int sectionIndex = 0; sectionIndex < serverSections.size(); sectionIndex++) {
+            ServerSection section = serverSections.get(sectionIndex);
+            if (!section.searchResults().isEmpty()) {
+                for (int visibleSlot = 0; visibleSlot < section.searchResults().size(); visibleSlot++) {
+                    SearchEntry entry = section.searchResults().get(visibleSlot);
+                    InventoryAdapter adapter = resolvePreviewAdapter(entry.connection(), resolved);
+                    if (adapter != null && entry.slot() < adapter.getSlots()) {
+                        targets.add(new PreviewTarget(sectionIndex, visibleSlot, entry.slot(), adapter));
+                    }
+                }
+                continue;
+            }
+            if (section.connection() == null) continue;
+            InventoryAdapter adapter = resolvePreviewAdapter(section.connection(), resolved);
+            if (adapter == null) continue;
+            for (int slot = 0; slot < Math.min(section.slotCount(), adapter.getSlots()); slot++) {
+                targets.add(new PreviewTarget(sectionIndex, slot, slot, adapter));
+            }
+        }
+        return targets;
+    }
+
+    private InventoryAdapter resolvePreviewAdapter(TerminalConnection connection,
+                                                    Map<UUID, InventoryAdapter> resolved) {
+        InventoryAdapter cached = resolved.get(connection.connectionId());
+        if (cached != null) return cached;
+        InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
+        InventoryAdapter adapter = resolution.status() == ConnectionStatus.AVAILABLE
+                ? resolution.adapter() : null;
+        if (adapter != null) resolved.put(connection.connectionId(), adapter);
+        return adapter;
+    }
+
+    private int simulatedShiftDragTotalLimit(PreviewTarget target, ItemStack existing, ItemStack incoming) {
+        IItemHandler handler = target.adapter().handler();
+        int slot = target.handlerSlot();
+        int existingCount = existing.isEmpty() ? 0 : existing.getCount();
+        int slotLimit = Math.max(0, handler.getSlotLimit(slot));
+        int ceiling = target.adapter().implementationKind()
+                == TerminalConnection.ImplementationKind.VANILLA_CONTAINER
+                ? ShiftDragInsertionRules.vanillaTotalLimit(slotLimit, incoming.getMaxStackSize())
+                : ShiftDragInsertionRules.moddedTotalLimit(slotLimit, incoming.getMaxStackSize());
+        int offeredCount = Math.max(0, ceiling - existingCount);
+        if (offeredCount == 0 || !handler.isItemValid(slot, incoming)) return existingCount;
+        ItemStack offered = incoming.copyWithCount(offeredCount);
+        int accepted;
+        if (supportsSophisticatedManualClick(target.adapter(), slot)) {
+            accepted = SophisticatedStorageManualClicks.simulatedCapacity(world, target.adapter(), slot, offered);
+        } else if (supportsStorageDrawersManualClick(target.adapter(), slot)) {
+            accepted = StorageDrawersManualClicks.simulatedCapacity(world, target.adapter(), slot, offered);
+        } else {
+            ItemStack remainder = handler.insertItem(slot, offered, true);
+            if (!isValidRemainder(incoming, offeredCount, remainder)) return existingCount;
+            accepted = offeredCount - remainder.getCount();
+        }
+        return existingCount + Math.max(0, Math.min(offeredCount, accepted));
+    }
+
+    private void executeShiftDragPlan(ServerPlayer player, ShiftDragPlanResult result) {
+        UUID id = terminalId();
+        if (id == null) return;
+        for (ShiftDragPlanner.SourceResult sourceResult : result.plan().sources()) {
+            int sourceSlot = sourceResult.menuSlot();
+            if (sourceSlot < 0 || sourceSlot >= slots.size()) continue;
+            Slot source = slots.get(sourceSlot);
+            if (!source.hasItem() || !source.mayPickup(player)) continue;
+            ItemStack moving = source.getItem().copy();
+            ItemStack original = moving.copy();
+            for (ShiftDragPlanner.Transfer transfer : result.plan().transfers()) {
+                if (transfer.sourceMenuSlot() != sourceSlot || moving.isEmpty()) continue;
+                PreviewTarget target = result.targets().get(destinationKey(transfer.section(), transfer.slot()));
+                if (target == null) continue;
+                insertShiftDragSlot(target, moving, transfer.count());
+            }
+            int transferred = original.getCount() - moving.getCount();
+            if (transferred <= 0) continue;
+            source.set(moving);
+            source.onTake(player, original.copyWithCount(transferred));
+            consumeMatchingOriginRecords(player, id, original.copyWithCount(1), transferred);
+        }
+        player.getInventory().setChanged();
+    }
+
+    private int insertShiftDragSlot(PreviewTarget target, ItemStack stack, int requested) {
+        if (stack.isEmpty() || requested <= 0) return 0;
+        InventoryAdapter adapter = target.adapter();
+        int slot = target.handlerSlot();
+        if (adapter.implementationKind() == TerminalConnection.ImplementationKind.VANILLA_CONTAINER) {
+            int current = adapter.handler().getStackInSlot(slot).getCount();
+            int limit = ShiftDragInsertionRules.vanillaTotalLimit(
+                    adapter.handler().getSlotLimit(slot), stack.getMaxStackSize());
+            return insertRemoteSlot(adapter.handler(), slot, stack,
+                    Math.min(requested, Math.max(0, limit - current)));
+        }
+        if (supportsSophisticatedManualClick(adapter, slot)) {
+            return Math.max(0, SophisticatedStorageManualClicks.insert(world, adapter, slot, stack, requested));
+        }
+        if (supportsStorageDrawersManualClick(adapter, slot)) {
+            return Math.max(0, StorageDrawersManualClicks.insert(world, adapter, slot, stack, requested));
+        }
+        return insertRemoteSlot(adapter.handler(), slot, stack, requested);
+    }
+
+    private static long destinationKey(int section, int slot) {
+        return ((long) section << 32) | (slot & 0xFFFFFFFFL);
+    }
+
+    private static int findOrAddItemType(List<ItemStack> itemTypes, ItemStack stack) {
+        int existing = findItemType(itemTypes, stack);
+        if (existing >= 0) return existing;
+        itemTypes.add(stack.copyWithCount(1));
+        return itemTypes.size() - 1;
+    }
+
+    private static int findItemType(List<ItemStack> itemTypes, ItemStack stack) {
+        for (int i = 0; i < itemTypes.size(); i++) {
+            if (ItemStack.isSameItemSameComponents(itemTypes.get(i), stack)) return i;
+        }
+        return -1;
+    }
+
+    private record PreviewTarget(int section, int slot, int handlerSlot, InventoryAdapter adapter) { }
+
+    private record ShiftDragPlanResult(boolean complete, ShiftDragPlanner.Plan plan,
+                                       Map<Long, PreviewTarget> targets,
+                                       Map<Integer, ItemStack> sourceStacks,
+                                       List<ItemStack> itemTypes,
+                                       ShiftDragSnapshot snapshot) {
+        private static ShiftDragPlanResult incomplete() {
+            return new ShiftDragPlanResult(false, null, Map.of(), Map.of(), List.of(), null);
+        }
+    }
+
+    private record SourceSnapshot(int menuSlot, ItemStack stack) {
+        private SourceSnapshot {
+            stack = stack.copy();
+        }
+    }
+
+    private record DestinationSnapshot(int section, int slot, UUID connectionId, int handlerSlot,
+                                       ItemStack stack, int slotLimit,
+                                       TerminalConnection.ImplementationKind implementationKind) {
+        private DestinationSnapshot {
+            stack = stack.copy();
+        }
+    }
+
+    private record ShiftDragSnapshot(List<SourceSnapshot> sources,
+                                     List<DestinationSnapshot> destinations,
+                                     ShiftDragPlanner.Plan plan) {
+        private ShiftDragSnapshot {
+            sources = List.copyOf(sources);
+            destinations = List.copyOf(destinations);
+        }
+
+        private boolean matches(ShiftDragSnapshot other) {
+            if (other == null || !plan.equals(other.plan)
+                    || sources.size() != other.sources.size()
+                    || destinations.size() != other.destinations.size()) return false;
+            for (int i = 0; i < sources.size(); i++) {
+                SourceSnapshot current = sources.get(i);
+                SourceSnapshot previous = other.sources.get(i);
+                if (current.menuSlot() != previous.menuSlot()
+                        || !ItemStack.matches(current.stack(), previous.stack())) return false;
+            }
+            for (int i = 0; i < destinations.size(); i++) {
+                DestinationSnapshot current = destinations.get(i);
+                DestinationSnapshot previous = other.destinations.get(i);
+                if (current.section() != previous.section() || current.slot() != previous.slot()
+                        || !current.connectionId().equals(previous.connectionId())
+                        || current.handlerSlot() != previous.handlerSlot()
+                        || current.slotLimit() != previous.slotLimit()
+                        || current.implementationKind() != previous.implementationKind()
+                        || !ItemStack.matches(current.stack(), previous.stack())) return false;
+            }
+            return true;
+        }
     }
 
     // Apply origin-lock routing before the ordinary clicked-slot operation.
@@ -1215,9 +1600,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter adapter = resolution.adapter();
             if (resolution.status() != ConnectionStatus.AVAILABLE || adapter == null
                     || handlerSlot < 0 || handlerSlot >= adapter.getSlots()) continue;
-            boolean directManual = click.button() != 2
-                    && (supportsSophisticatedManualClick(adapter, handlerSlot)
-                    || supportsStorageDrawersManualClick(adapter, handlerSlot));
+            boolean directManual = supportsSophisticatedManualClick(adapter, handlerSlot)
+                    || supportsStorageDrawersManualClick(adapter, handlerSlot);
             int capacity = directManual
                     ? manualRemoteCapacity(adapter, handlerSlot, carried)
                     : canAcceptRemoteSlot(adapter.handler(), handlerSlot, carried) ? carried.getCount() : 0;
@@ -1242,8 +1626,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             return;
         }
         if (creativeFill) {
-            for (RemoteDestination destination : destinations) {
-                fillRemoteSlotCreative(destination.handler(), destination.slot(), carried);
+            for (ManualRemoteDestination destination : manualDestinations) {
+                fillRemoteSlotCreative(destination, carried);
             }
         } else {
             int distributionBudget = Math.max(0, requested - originInserted);
@@ -1326,14 +1710,24 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         }
     }
 
-    private void fillRemoteSlotCreative(IItemHandler handler, int slot, ItemStack stack) {
+    private void fillRemoteSlotCreative(ManualRemoteDestination destination, ItemStack stack) {
         if (stack.isEmpty()) return;
+        IItemHandler handler = destination.adapter().handler();
+        int slot = destination.slot();
         ItemStack existing = handler.getStackInSlot(slot);
         if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return;
-        int capacity = Math.max(0, handler.getSlotLimit(slot) - (existing.isEmpty() ? 0 : existing.getCount()));
+        int limit = TerminalInsertionRules.creativeCopyLimit(
+                stack.getMaxStackSize(), handler.getSlotLimit(slot));
+        int capacity = Math.max(0, limit - (existing.isEmpty() ? 0 : existing.getCount()));
         if (capacity <= 0) return;
         ItemStack offered = stack.copyWithCount(capacity);
-        insertRemoteSlot(handler, slot, offered, capacity);
+        if (supportsSophisticatedManualClick(destination.adapter(), slot)) {
+            SophisticatedStorageManualClicks.insert(world, destination.adapter(), slot, offered, capacity);
+        } else if (supportsStorageDrawersManualClick(destination.adapter(), slot)) {
+            StorageDrawersManualClicks.insert(world, destination.adapter(), slot, offered, capacity);
+        } else {
+            insertRemoteSlot(handler, slot, offered, capacity);
+        }
     }
 
     private boolean canAcceptRemoteSlot(IItemHandler handler, int slot, ItemStack stack) {

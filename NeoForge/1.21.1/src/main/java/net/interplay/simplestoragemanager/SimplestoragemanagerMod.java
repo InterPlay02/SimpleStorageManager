@@ -109,19 +109,4 @@ public class SimplestoragemanagerMod {
 			}
 		}
 	}
-
-	/*public static class CuriosApiHelper {
-		private static final EntityCapability<IItemHandler, Void> CURIOS_INVENTORY = EntityCapability.createVoid(ResourceLocation.fromNamespaceAndPath("curios", "item_handler"), IItemHandler.class);
-
-		public static IItemHandler getCuriosInventory(Player player) {
-			if (ModList.get().isLoaded("curios")) {
-				return player.getCapability(CURIOS_INVENTORY);
-			}
-			return null;
-		}
-
-		public static boolean isCurioItem(ItemStack itemstack) {
-			return BuiltInRegistries.ITEM.getTagNames().filter(tagKey -> tagKey.location().getNamespace().equals("curios")).anyMatch(itemstack::is);
-		}
-	}*/
 }

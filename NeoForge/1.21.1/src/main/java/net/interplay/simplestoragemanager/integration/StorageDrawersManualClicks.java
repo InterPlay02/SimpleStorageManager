@@ -17,8 +17,7 @@ import net.neoforged.neoforge.items.IItemHandler;
 
 public final class StorageDrawersManualClicks {
     public static final int UNSUPPORTED = -1;
-    private static final int VIRTUAL_SLOT = 0;
-    private static final int FIRST_PHYSICAL_SLOT = 1;
+    private static final int FIRST_HANDLER_SLOT = 1;
 
     private StorageDrawersManualClicks() {
     }
@@ -26,6 +25,10 @@ public final class StorageDrawersManualClicks {
     public static IItemHandler stabilize(Level level, BlockPos position, Direction side, IItemHandler handler) {
         return handler instanceof PlatformDrawerItemHandler
                 ? new StorageDrawersStableItemHandler(level, position, side) : handler;
+    }
+
+    public static boolean isStableHandler(IItemHandler handler) {
+        return handler instanceof StorageDrawersStableItemHandler;
     }
 
     public static boolean supports(Level level, InventoryAdapter adapter, int slot) {
@@ -98,17 +101,15 @@ public final class StorageDrawersManualClicks {
                 Capabilities.ItemHandler.BLOCK, position, adapter.connection().side());
         IDrawerGroup group = BlockEntityDrawers.getGroup(drawers);
         if (!(current instanceof PlatformDrawerItemHandler) || group == null || !group.isGroupValid()
-                || current.getSlots() != group.getDrawerCount() + FIRST_PHYSICAL_SLOT
-                || slot == VIRTUAL_SLOT && slot >= current.getSlots()) return null;
+                || current.getSlots() != group.getDrawerCount() + FIRST_HANDLER_SLOT) return null;
 
-        DrawerSlot drawerSlot = slot == VIRTUAL_SLOT ? null : resolveDrawerSlot(group, slot);
+        DrawerSlot drawerSlot = resolveDrawerSlot(group, slot);
         return new Target(drawerSlot);
     }
 
     private static DrawerSlot resolveDrawerSlot(IDrawerGroup group, int slot) {
-        int physicalIndex = slot - FIRST_PHYSICAL_SLOT;
-        if (physicalIndex < 0 || physicalIndex >= group.getDrawerCount()) return null;
-        IDrawer drawer = group.getDrawer(physicalIndex);
+        if (slot < 0 || slot >= group.getDrawerCount()) return null;
+        IDrawer drawer = group.getDrawer(slot);
         return drawer == null ? null : new DrawerSlot(drawer);
     }
 

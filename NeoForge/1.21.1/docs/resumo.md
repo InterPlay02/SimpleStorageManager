@@ -1,4 +1,5 @@
 # Simple Storage Manager - documentacao do Mod
+Versão do Java: 21
 
 ## Arquitetura atual
 
@@ -32,11 +33,11 @@
 - A GUI dimensional usa `dimensional_upgrade_gui.png`, linhas de `bg.png`/`bg_highlighted.png` renderizadas em 225x20 sem esticar as texturas, checkboxes redimensionadas da imagem completa de 20x20 para 10x10 e rolagem da lista com o scroller existente. Os botões Cancelar e Salvar ficam 5 pixels acima da posição anterior, com a instrução de seleção centralizada entre eles.
 - O servidor reavalia a disponibilidade das conexões abertas a cada 20 ticks (um contador por menu) e envia atualizações apenas para conexões cujo estado mudou. Verificações ativas em operações reiniciam o contador; depósitos, retiradas e devoluções da grade consultam novamente o alcance e os chunks no momento da operação.
 - Os títulos dos inventários conectados usam o `Component` retornado por `Nameable.getDisplayName()` da entidade de bloco conectada, com o nome do bloco como fallback. O componente segue sem conversão para texto bruto pelo payload até ser renderizado na GUI.
-- Cliques manuais em inventários Sophisticated preservam o índice usando `InventoryHandler.insertItemOnlyToSlot`, com simulação e débito do cursor pela quantidade aceita na execução. A mochila Sophisticated é resolvida quando colocada como bloco (`BackpackBlockEntity`); seu handler exposto é associado ao `InventoryHandler` interno. Storage Drawers expõe drawers físicos em ordem estável por posição no grupo, mesmo quando o protótipo altera a ordem dinâmica do handler. A integração escreve pela API pública `IDrawerGroup`/`IDrawer`, sem usar o full scan de `insertItem`; o slot virtual 0 não é um destino de escrita manual. A quantidade debitada é a diferença medida na contagem da gaveta. Os demais handlers continuam no caminho genérico; extração e shift mantêm suas regras com o índice traduzido para a ordem física estável.
+- Cliques manuais em inventários Sophisticated preservam o índice usando `InventoryHandler.insertItemOnlyToSlot`, com simulação e débito do cursor pela quantidade aceita na execução. A mochila Sophisticated é resolvida quando colocada como bloco (`BackpackBlockEntity`); seu handler exposto é associado ao `InventoryHandler` interno. Storage Drawers expõe somente os drawers físicos, em ordem estável por posição no grupo, mesmo quando o protótipo altera a ordem dinâmica do handler; o slot virtual interno 0 não aparece no terminal. A integração escreve pela API pública `IDrawerGroup`/`IDrawer`, sem usar o full scan de `insertItem`. A quantidade debitada é a diferença medida na contagem da gaveta. Os demais handlers continuam no caminho genérico; extração e shift mantêm suas regras com o índice traduzido para a ordem física estável.
 - Arrastos manuais esquerdo/direito preservam os slots visitados: o esquerdo divide a quantidade igualmente entre os destinos considerados aceitantes, e o direito oferece um item por destino. A capacidade medida das integrações diretas limita cada inserção; se a execução aceitar menos que o planejado, o excedente permanece no cursor. `ManualInsertionRules.planDrag` faz esse cálculo no servidor; ele implementa a divisão em código próprio e não chama diretamente `AbstractContainerMenu.getQuickCraftPlaceCount`. Arrastos criativos continuam no caminho próprio, após validação de modo e capacidade.
 - Snapshots de inventários conectados serializam a quantidade separadamente dos dados do item para não herdar o limite de 99 do codec Vanilla de `ItemStack`; a quantidade segue o limite inteiro do handler e o cliente também recebe a capacidade por slot para prever inserções em pilhas acima do máximo padrão.
 - Na GUI, contagens acima de 999 são desenhadas em escala reduzida. Arrastos de inserção são confirmados automaticamente segundo as condições de término específicas de cada botão, sem esperar a liberação do botão quando a distribuição já terminou.
-- Os três upgrades exibem uma instrução com o key mapping configurado para agachar; a descrição traduzida aparece enquanto essa tecla estiver pressionada. O inventário criativo também usa o key mapping de pegar item para clonar stacks e iniciar o arrasto de cópias.
+- Os três upgrades exibem uma instrução com o key mapping configurado para agachar; a descrição traduzida aparece enquanto essa tecla estiver pressionada. O inventário criativo também usa o key mapping de pegar item para clonar stacks e iniciar o arrasto de cópias. A cópia pela roda em inventários conectados é validada no servidor; o arrasto preenche somente os slots visitados e limita a cópia ao menor valor entre o máximo do item e o limite do slot.
 - As descrições dos upgrades são quebradas em linhas usando a largura da fonte do cliente e preservam o texto traduzido.
 
 ## Decisões
@@ -130,18 +131,6 @@ Os testes JUnit cobrem busca parcial sem diferenciar maiusculas, regras de depos
 
 Matriz de validação manual pendente: repetir as operações de clique, shift-clique e shift-arrasto em inventário vanilla de 64, inventário de mod de 64 e inventário de mod com slot acima do limite do item; fazer cada teste com o cadeado destrancado e trancado, em SMALL/BIG e singleplayer/multiplayer. Confirmar inserção, troca, ordem de pilhas parciais/vazias, simulação antes da mutação, devolução à origem e encerramento do arrasto sem destino. A prévia do cliente é apenas visual; o servidor decide e confirma a operação.
 
-Casos de teste manual para o crafting e o botão X:
-
-1. Abrir com a grade vazia e confirmar que nenhum resultado é exibido.
-2. Fazer uma receita com sobras (por exemplo, baldes de leite) e confirmar que cada recipiente é devolvido.
-3. Shift-clique no resultado com materiais para mais de uma execução; confirmar que repete a receita enquanto ela e o resultado forem iguais, parando quando a grade esvaziar, mudar a receita ou não houver destino.
-4. Com inventário principal cheio, shift-clique e shift-arrasto de itens dos slots de upgrade, armadura, mão secundária e crafting; confirmar a prioridade da hotbar e, depois, do primeiro slot vazio conectado.
-5. Com inventário principal cheio, limpar a grade; confirmar que usa primeiro a hotbar e depois os inventários conectados.
-6. Com todos os destinos cheios, clicar X; confirmar que os itens permanecem na grade, inclusive sobras parciais.
-7. Fechar a GUI com itens na grade e espaço no inventário; confirmar a ordem de devolução.
-8. Fechar a GUI sem espaço; confirmar que os itens caem perto do jogador e saem da grade.
-9. Repetir os testes nas variantes SMALL e BIG, verificando a posição do X e dos slots.
-
 ## Upgrades e seleção de dimensões
 
 `UpgradeAccessRules` centraliza o nível efetivo, as regras de distância e dimensão e a validação da seleção de no máximo cinco dimensões registradas. `StorageManagerGUIMenu` consulta essas regras antes de expor ou operar conexões, mantendo a validação de chunk carregada para todos os níveis.
@@ -156,13 +145,26 @@ Os testes JUnit cobrem o nível efetivo, as regras de distância e dimensão dos
 2. Clique simples direito (mesmo que o esquerdo, porém limitado a um item por operação, metade ao extrair).
 3. Shift-clique no inventário do player, incluindo hotbar, envia a pilha toda ao primeiro slot vazio, priorizando pilhas parciais.
 4. Shift-clique no inventário conectado envia a pilha inteira (ou limitado ao máximo do item em slots que aceitam mais de 64) para o inventário do player primeiro, depois pra hotbar, ou cancela.
-5. Shift + arrasto em inventário conectado envia todas as pilhas sobre as quais o mouse passar, respeitando as regras de shift-click acima.
-6. Arrasto sem Shift esquerdo em inventário conectado distribui os itens pelos slots e equaliza as quantidades.
-7. Arrasto sem Shift direito em inventário conectado apenas um item em cada slot sobre os quais o mouse passar.
-8. Cadeado trancado, deve ter os mesmos comportamentos, porém sempre priorizando o inventário de origem. Clicar fora do inventário de origem com item no cursor enquanto o cadeado está trancado, envia a pilha para o primeiro slot vazio do inventário de origem, priorizando pilhas parciais. Clique direito também, porém um item de cada vez.
-9. Somente quando o jogo estiver no modo criativo:
+5. Shift-clique + arrasto em inventário conectado envia todas as pilhas sobre as quais o mouse passar, respeitando as regras de shift-click acima.
+6. Shift-clique + arrasto no inventário do player envia cada pilha para o primeiro slot válido de algum inventário conectado ao terminal:
+   - Primeiro tenta enviar para pilhas parciais do mesmo tipo que ainda possuem espaço para inserção.
+   - Depois tenta enviar para o primeiro slot vazio.
+   - O "espaço para inserção" é definido primeiro pelo limite máximo do próprio item (64, 16 ou 1) e depois é definido pelo limite máximo do próprio slot (64 ou mais).
+   - Um "slot válido" é definido pelo fato de haver espaço para inserção, independente do limite máximo de itens que cabe no slot. Ou seja, se a quantidade de itens presente no slot for menor que os limites (primeiro do item e depois do slot), então há espaço para inserção.
+   - Fórmula pra calcular o espaço para inserção: if (slotMax == 64 && itemMax == 64 && itemCount < 64) || (slotMax == 64 && itemMax == 16 && itemCount < 16) || (slotMax > 64 && itemMax > 1 && itemCount < slotMax) {return true} else {return false};
+7. Arrasto esquerdo sem Shift em inventário conectado distribui os itens pelos slots e equaliza as quantidades.
+8. Arrasto direito sem Shift em inventário conectado distribui apenas um item em cada slot sobre os quais o mouse passar.
+9. Qualquer clique com cadeado trancado deve ter os mesmos comportamentos descritos acima, porém sempre priorizando o inventário de origem:
+   - O "inventário de origem" é o inventário conectado ao terminal de onde o item saiu.
+   - Clique esquerdo fora do inventário de origem com item no cursor enquanto o cadeado está trancado, envia a pilha para o primeiro slot do inventário de origem com espaço para inserção, priorizando pilhas parciais.
+   - Clique direito faz o mesmo, porém um item de cada vez.
+10. Somente quando o jogo estiver no modo criativo:
    - Clicar com a roda do mouse sobre um item com o cursor vazio cria uma cópia do stack completo do item que tá no slot e envia-o para o cursor.
    - Clicar em slot vazio com item no cursor (com ou sem arrasto), criar cópias do stack, enviando-as aos slots sobre os quais o mouse passar (limitando-se primeiro à quantidade máxima do item e depois à do slot). Passar sobre slot que já contenha item durante a operação de arrasto ignora o slot cheio, independente do item presente no slot.
    - Clicar em slot com item, tendo item no cursor, não faz nada.
    - O clique com a roda do mouse não é afetado pelo cadeado, ele funciona da mesma forma em todo tipo de slot, independente do cadeado.
    - Somente nos seguintes slots da GUI que ele vai ser limitado: slots de upgrades (não insere itens que não sejam upgrades, limitado a 1 em cada slot), slots de armadura (só aceita armaduras, limitado a 1 por slot), slot de resultado de receitas (é slot de saída). Todos os outros slots funcionam como descritos acima.
+
+As conexões do terminal mantêm a ordem de conexão e um UUID próprio, persistidos junto da dimensão, posição e ID de registro do bloco âncora. Dados antigos recebem UUIDs estáveis durante a migração. O tipo salvo é apenas uma identificação da implementação resolvida; nenhum handler remoto é armazenado e a resolução continua respeitando a disponibilidade de chunks.
+
+No Shift-clique + arrasto iniciado no inventário do jogador, cada atualização da sequência visitada solicita ao servidor um plano visual cumulativo. O servidor usa a estratégia do adaptador efetivamente resolvido (wrapper `Container`, handler genérico ou integração específica) e simula as fontes em ordem sobre um estado virtual compartilhado. O cliente apenas renderiza as alterações recebidas; ao soltar, o servidor revalida e planeja/executa novamente, comparando o plano e os snapshots da prévia para cancelar com segurança se o estado remoto mudou. Como handlers remotos só podem ser simulados com segurança no servidor, a prévia depende da resposta de rede e não usa cálculo local aproximado como fallback. Se uma origem lembrada pelo cadeado estiver oculta pelo filtro de busca, o plano não pode ser representado fielmente na grade atual: a operação é cancelada com aviso, em vez de executar sem prévia ou usar o caminho legado. Handlers não reconhecidos pelas integrações são classificados como `MODDED_HANDLER` e consultados somente pelo contrato `insertItem(..., true)`; sem capability `IItemHandler`, a conexão permanece indisponível em vez de inferir uma estratégia ou carregar chunks.

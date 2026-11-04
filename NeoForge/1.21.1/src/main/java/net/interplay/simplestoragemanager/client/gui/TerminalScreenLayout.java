@@ -10,12 +10,13 @@ public final class TerminalScreenLayout {
     public static final int BUTTON_SIZE = 8;
     public static final int LOCK_BUTTON_SIZE = 10;
     public static final int ALERT_ICON_SIZE = 10;
+    public static final int SEARCH_LEFT_INSET = 1;
 
     public static final Variant SMALL = new Variant(
             216, 230,
             new Rect(31, 23, 192, 65),
             new Rect(198, 23, 210, 141),
-            new Rect(103, 8, 192, 19),
+            new Rect(103 + SEARCH_LEFT_INSET, 8, 192, 19),
             new Point(6, 5), new Point(6, 23), new Point(6, 41),
             new Rect(24, 70, 74, 141),
             new Point[]{new Point(7, 70), new Point(7, 88), new Point(7, 106), new Point(7, 124)},
@@ -26,7 +27,7 @@ public final class TerminalScreenLayout {
             216, 342,
             new Rect(31, 23, 192, 177),
             new Rect(198, 23, 210, 141),
-            new Rect(103, 8, 192, 19),
+            new Rect(103 + SEARCH_LEFT_INSET, 8, 192, 19),
             new Point(6, 5), new Point(6, 23), new Point(6, 41),
             new Rect(24, 181, 74, 252),
             new Point[]{new Point(7, 181), new Point(7, 199), new Point(7, 217), new Point(7, 235)},

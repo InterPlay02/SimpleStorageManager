@@ -13,8 +13,7 @@ import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.items.IItemHandler;
 
 final class StorageDrawersStableItemHandler implements IItemHandler {
-    private static final int VIRTUAL_SLOT = 0;
-    private static final int FIRST_PHYSICAL_SLOT = 1;
+    private static final int FIRST_HANDLER_SLOT = 1;
     private static final int SINGLE_ITEM_COUNT = 1;
 
     private final Level level;
@@ -34,7 +33,7 @@ final class StorageDrawersStableItemHandler implements IItemHandler {
     @Override
     public int getSlots() {
         Context context = resolve();
-        return context == null ? 0 : context.handler().getSlots();
+        return context == null ? 0 : context.group().getDrawerCount();
     }
 
     @Override
@@ -77,7 +76,6 @@ final class StorageDrawersStableItemHandler implements IItemHandler {
     @Override
     public int getSlotLimit(int slot) {
         Context context = resolve();
-        if (context != null && slot == VIRTUAL_SLOT) return context.handler().getSlotLimit(VIRTUAL_SLOT);
         int handlerSlot = mapToHandlerSlot(context, slot);
         return handlerSlot < 0 ? 0 : context.handler().getSlotLimit(handlerSlot);
     }
@@ -97,26 +95,23 @@ final class StorageDrawersStableItemHandler implements IItemHandler {
         IItemHandler handler = level.getCapability(Capabilities.ItemHandler.BLOCK, position, side);
         IDrawerGroup group = BlockEntityDrawers.getGroup(drawers);
         if (!(handler instanceof PlatformDrawerItemHandler) || group == null || !group.isGroupValid()
-                || handler.getSlots() != group.getDrawerCount() + FIRST_PHYSICAL_SLOT) return null;
+                || handler.getSlots() != group.getDrawerCount() + FIRST_HANDLER_SLOT) return null;
         return new Context(group, handler);
     }
 
     private int mapToHandlerSlot(Context context, int stableSlot) {
-        if (context == null || stableSlot < 0 || stableSlot >= context.handler().getSlots()) return -1;
-        if (stableSlot == VIRTUAL_SLOT) return -1;
+        if (context == null || stableSlot < 0 || stableSlot >= context.group().getDrawerCount()) return -1;
 
-        int physicalSlot = stableSlot - FIRST_PHYSICAL_SLOT;
         int[] order = context.group().getAccessibleDrawerSlots();
         for (int orderedSlot = 0; orderedSlot < order.length; orderedSlot++) {
-            if (order[orderedSlot] == physicalSlot) return orderedSlot + FIRST_PHYSICAL_SLOT;
+            if (order[orderedSlot] == stableSlot) return orderedSlot + FIRST_HANDLER_SLOT;
         }
         return -1;
     }
 
     private IDrawer getPhysicalDrawer(Context context, int stableSlot) {
-        if (context == null || stableSlot < FIRST_PHYSICAL_SLOT
-                || stableSlot >= context.group().getDrawerCount() + FIRST_PHYSICAL_SLOT) return null;
-        return context.group().getDrawer(stableSlot - FIRST_PHYSICAL_SLOT);
+        if (context == null || stableSlot < 0 || stableSlot >= context.group().getDrawerCount()) return null;
+        return context.group().getDrawer(stableSlot);
     }
 
     private static boolean canStore(IDrawer drawer, ItemStack stack) {

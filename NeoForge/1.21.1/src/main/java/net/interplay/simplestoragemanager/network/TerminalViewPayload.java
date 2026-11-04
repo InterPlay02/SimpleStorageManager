@@ -22,6 +22,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /** Server snapshot for terminal layout, remote slots, origin previews and operation reconciliation. */
 @EventBusSubscriber
@@ -54,11 +55,17 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
             ByteBufCodecs.VAR_INT, Section::status,
             ByteBufCodecs.VAR_INT, Section::slotCount,
             Section::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, UUID> UUID_CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_LONG, UUID::getMostSignificantBits,
+            ByteBufCodecs.VAR_LONG, UUID::getLeastSignificantBits,
+            UUID::new);
     public static final StreamCodec<RegistryFriendlyByteBuf, VisibleSlot> VISIBLE_SLOT_CODEC = StreamCodec.composite(
             ByteBufCodecs.VAR_INT, VisibleSlot::section,
             ByteBufCodecs.VAR_INT, VisibleSlot::slot,
             STACK_CODEC, VisibleSlot::stack,
             ByteBufCodecs.VAR_INT, VisibleSlot::slotLimit,
+            UUID_CODEC, VisibleSlot::connectionId,
+            ByteBufCodecs.VAR_INT, VisibleSlot::storageSlot,
             VisibleSlot::new);
     private static final StreamCodec<RegistryFriendlyByteBuf, Notice> NOTICE_CODEC = StreamCodec.composite(
             ByteBufCodecs.stringUtf8(32767), Notice::dimension,
@@ -149,7 +156,8 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
         sections = List.copyOf(sections);
         visibleSlots = visibleSlots.stream()
                 .filter(slot -> slot != null && slot.stack() != null)
-                .map(slot -> new VisibleSlot(slot.section(), slot.slot(), slot.stack().copy(), slot.slotLimit()))
+                .map(slot -> new VisibleSlot(slot.section(), slot.slot(), slot.stack().copy(), slot.slotLimit(),
+                        slot.connectionId(), slot.storageSlot()))
                 .toList();
         notices = List.copyOf(notices);
         originTargets = List.copyOf(originTargets);
@@ -187,13 +195,22 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
         }
     }
 
-    public record VisibleSlot(int section, int slot, ItemStack stack, int slotLimit) {
+    public record VisibleSlot(int section, int slot, ItemStack stack, int slotLimit,
+                              UUID connectionId, int storageSlot) {
+        private static final UUID NO_CONNECTION = new UUID(0L, 0L);
+
         public VisibleSlot(int section, int slot, ItemStack stack) {
-            this(section, slot, stack, stack.getMaxStackSize());
+            this(section, slot, stack, stack.getMaxStackSize(), NO_CONNECTION, slot);
+        }
+
+        public VisibleSlot(int section, int slot, ItemStack stack, int slotLimit) {
+            this(section, slot, stack, slotLimit, NO_CONNECTION, slot);
         }
 
         public VisibleSlot {
             slotLimit = Math.max(0, slotLimit);
+            connectionId = connectionId == null ? NO_CONNECTION : connectionId;
+            storageSlot = Math.max(0, storageSlot);
         }
     }
     public record Notice(String dimension, BlockPos pos, int sectionIndex, int slotCount) { }

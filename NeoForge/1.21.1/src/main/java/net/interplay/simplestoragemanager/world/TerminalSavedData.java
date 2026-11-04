@@ -46,7 +46,17 @@ public final class TerminalSavedData extends SavedData {
     }
 
     public synchronized void putConnections(UUID terminalId, List<TerminalConnection> values) {
-        connections.put(terminalId, new ArrayList<>(values));
+        List<TerminalConnection> ordered = new ArrayList<>(values.size());
+        Set<UUID> identifiers = new HashSet<>();
+        for (int i = 0; i < values.size(); i++) {
+            TerminalConnection connection = values.get(i);
+            UUID identifier = connection.connectionId();
+            while (!identifiers.add(identifier)) {
+                identifier = UUID.randomUUID();
+            }
+            ordered.add(connection.withIdentity(identifier, i));
+        }
+        connections.put(terminalId, ordered);
         setDirty();
     }
 
@@ -84,7 +94,11 @@ public final class TerminalSavedData extends SavedData {
                 TerminalConnection remaining = connection.withoutMember(pos);
                 if (remaining != null) updated.add(remaining);
             }
-            entry.setValue(updated);
+            List<TerminalConnection> ordered = new ArrayList<>(updated.size());
+            for (int i = 0; i < updated.size(); i++) {
+                ordered.add(updated.get(i).withIdentity(updated.get(i).connectionId(), i));
+            }
+            entry.setValue(ordered);
         }
         if (changed) setDirty();
     }
@@ -179,6 +193,8 @@ public final class TerminalSavedData extends SavedData {
             }
             List<TerminalConnection> terminalConnections = new ArrayList<>();
             ListTag connectionList = terminalTag.getList("Connections", Tag.TAG_COMPOUND);
+            Set<UUID> connectionIds = new HashSet<>();
+            boolean migratedConnections = false;
             for (int j = 0; j < connectionList.size(); j++) {
                 CompoundTag connectionTag = connectionList.getCompound(j);
                 ResourceKey<Level> dimension = dimension(connectionTag.getString("Dimension"));
@@ -205,10 +221,35 @@ public final class TerminalSavedData extends SavedData {
                 long brokenAtMillis = connectionTag.contains("BrokenAt")
                         ? connectionTag.getLong("BrokenAt")
                         : (broken.isEmpty() ? 0L : System.currentTimeMillis());
+                UUID connectionId = connectionTag.hasUUID("ConnectionId")
+                        ? connectionTag.getUUID("ConnectionId")
+                        : legacyConnectionId(id, dimension, anchor, side, j);
+                migratedConnections |= !connectionTag.hasUUID("ConnectionId")
+                        || !connectionTag.contains("Order") || !connectionTag.contains("ImplementationKind")
+                        || connectionTag.contains("Order") && connectionTag.getInt("Order") != j
+                        || !connectionTag.contains("BlockId") && memberBlockIds.containsKey(anchor);
+                int collision = 0;
+                while (!connectionIds.add(connectionId)) {
+                    connectionId = legacyConnectionId(id, dimension, anchor, side, j + ++collision);
+                    migratedConnections = true;
+                }
+                ResourceLocation blockId = connectionTag.contains("BlockId")
+                        ? ResourceLocation.parse(connectionTag.getString("BlockId"))
+                        : memberBlockIds.get(anchor);
+                TerminalConnection.ImplementationKind implementationKind =
+                        implementationKind(connectionTag.getString("ImplementationKind"));
                 terminalConnections.add(new TerminalConnection(dimension, anchor, side, members, broken, slotCount,
-                        memberBlockIds, brokenAtMillis));
+                        memberBlockIds, brokenAtMillis, connectionId,
+                        connectionTag.contains("Order") ? connectionTag.getInt("Order") : j,
+                        blockId, implementationKind));
+            }
+            terminalConnections.sort(java.util.Comparator.comparingInt(TerminalConnection::order));
+            for (int order = 0; order < terminalConnections.size(); order++) {
+                terminalConnections.set(order, terminalConnections.get(order).withIdentity(
+                        terminalConnections.get(order).connectionId(), order));
             }
             data.connections.put(id, terminalConnections);
+            if (migratedConnections) data.setDirty();
 
             List<Notice> terminalNotices = new ArrayList<>();
             ListTag noticeList = terminalTag.getList("Notices", Tag.TAG_COMPOUND);
@@ -245,6 +286,12 @@ public final class TerminalSavedData extends SavedData {
                 connectionTag.putString("Dimension", connection.dimension().location().toString());
                 connectionTag.putLong("Anchor", connection.pos().asLong());
                 connectionTag.putInt("Side", connection.side() == null ? -1 : connection.side().get3DDataValue());
+                connectionTag.putUUID("ConnectionId", connection.connectionId());
+                connectionTag.putInt("Order", connection.order());
+                if (connection.blockId() != null) {
+                    connectionTag.putString("BlockId", connection.blockId().toString());
+                }
+                connectionTag.putString("ImplementationKind", connection.implementationKind().name());
                 ListTag memberList = new ListTag();
                 connection.members().forEach(member -> memberList.add(net.minecraft.nbt.LongTag.valueOf(member.asLong())));
                 connectionTag.put("Members", memberList);
@@ -285,6 +332,21 @@ public final class TerminalSavedData extends SavedData {
     private static ResourceKey<Level> dimension(String value) {
         ResourceLocation location = ResourceLocation.parse(value.isEmpty() ? "minecraft:overworld" : value);
         return ResourceKey.create(Registries.DIMENSION, location);
+    }
+
+    private static UUID legacyConnectionId(UUID terminalId, ResourceKey<Level> dimension,
+                                           BlockPos anchor, Direction side, int index) {
+        String identity = terminalId + "|" + dimension.location() + "|" + anchor.asLong() + "|"
+                + (side == null ? -1 : side.get3DDataValue()) + "|" + index;
+        return UUID.nameUUIDFromBytes(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static TerminalConnection.ImplementationKind implementationKind(String value) {
+        try {
+            return TerminalConnection.ImplementationKind.valueOf(value);
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            return TerminalConnection.ImplementationKind.UNKNOWN;
+        }
     }
 
     public record Notice(ResourceKey<Level> dimension, BlockPos pos, int sectionIndex, int slotCount) {

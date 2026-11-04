@@ -19,7 +19,7 @@ import java.util.List;
 @EventBusSubscriber
 public record TerminalStorageClickPayload(int section, int slot, int button, boolean shift,
                                           List<SlotTarget> dragTargets, List<Integer> menuDragSlots,
-                                          long operationSequence)
+                                          long operationSequence, long shiftDragPreviewRequestId)
         implements CustomPacketPayload {
     private static final StreamCodec<RegistryFriendlyByteBuf, SlotTarget> SLOT_TARGET_CODEC = StreamCodec.composite(
             ByteBufCodecs.VAR_INT, SlotTarget::section,
@@ -44,6 +44,7 @@ public record TerminalStorageClickPayload(int section, int slot, int button, boo
                         DRAG_TARGETS_CODEC.encode(buffer, payload.dragTargets());
                         MENU_DRAG_SLOTS_CODEC.encode(buffer, payload.menuDragSlots());
                         ByteBufCodecs.VAR_LONG.encode(buffer, payload.operationSequence());
+                        ByteBufCodecs.VAR_LONG.encode(buffer, payload.shiftDragPreviewRequestId());
                     },
                     buffer -> new TerminalStorageClickPayload(
                             ByteBufCodecs.VAR_INT.decode(buffer),
@@ -52,19 +53,26 @@ public record TerminalStorageClickPayload(int section, int slot, int button, boo
                             ByteBufCodecs.BOOL.decode(buffer),
                             DRAG_TARGETS_CODEC.decode(buffer),
                             MENU_DRAG_SLOTS_CODEC.decode(buffer),
+                            ByteBufCodecs.VAR_LONG.decode(buffer),
                             ByteBufCodecs.VAR_LONG.decode(buffer)));
 
     public TerminalStorageClickPayload(int section, int slot, int button, boolean shift) {
-        this(section, slot, button, shift, List.of(), List.of(), 0);
+        this(section, slot, button, shift, List.of(), List.of(), 0, 0);
     }
 
     public TerminalStorageClickPayload(int section, int slot, int button, boolean shift, List<SlotTarget> dragTargets) {
-        this(section, slot, button, shift, dragTargets, List.of(), 0);
+        this(section, slot, button, shift, dragTargets, List.of(), 0, 0);
     }
 
     public TerminalStorageClickPayload(int section, int slot, int button, boolean shift,
                                        List<SlotTarget> dragTargets, List<Integer> menuDragSlots) {
-        this(section, slot, button, shift, dragTargets, menuDragSlots, 0);
+        this(section, slot, button, shift, dragTargets, menuDragSlots, 0, 0);
+    }
+
+    public TerminalStorageClickPayload(int section, int slot, int button, boolean shift,
+                                       List<SlotTarget> dragTargets, List<Integer> menuDragSlots,
+                                       long operationSequence) {
+        this(section, slot, button, shift, dragTargets, menuDragSlots, operationSequence, 0);
     }
 
     public TerminalStorageClickPayload {

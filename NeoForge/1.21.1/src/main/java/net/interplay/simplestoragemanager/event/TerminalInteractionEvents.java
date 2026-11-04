@@ -17,6 +17,8 @@ import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.interplay.simplestoragemanager.SimplestoragemanagerMod;
+import net.interplay.simplestoragemanager.access.AccessRule;
+import net.interplay.simplestoragemanager.access.InventoryAdapter;
 import net.interplay.simplestoragemanager.access.MultiblockDiscovery;
 import net.interplay.simplestoragemanager.data.TerminalConnection;
 import net.interplay.simplestoragemanager.data.TerminalDataComponents;
@@ -113,7 +115,14 @@ public final class TerminalInteractionEvents {
             player.sendSystemMessage(Component.translatable("message.simplestoragemanager.terminal_not_owner_connection"));
             return;
         }
-        connections.add(discovery.connection());
+        TerminalConnection newConnection = discovery.connection();
+        InventoryAdapter.Resolution initialResolution = InventoryAdapter.resolve(
+                player.serverLevel(), newConnection, player, AccessRule.ALWAYS);
+        if (initialResolution.adapter() != null) {
+            newConnection = newConnection.withImplementationKind(
+                    initialResolution.adapter().implementationKind());
+        }
+        connections.add(newConnection);
         data.putConnections(id, connections);
         player.sendSystemMessage(Component.translatable("message.simplestoragemanager.connected",
                 event.getPos().getX(), event.getPos().getY(), event.getPos().getZ()));
