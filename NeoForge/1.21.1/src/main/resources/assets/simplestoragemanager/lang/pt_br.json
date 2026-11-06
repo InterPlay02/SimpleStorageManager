@@ -18,7 +18,7 @@
   "message.simplestoragemanager.terminal_not_owner": "Somente o proprietário do terminal pode alterar inventários conectados.",
   "message.simplestoragemanager.terminal_not_owner_connection": "Somente o proprietário do terminal pode conectar ou desconectar inventários.",
   "message.simplestoragemanager.inventory_already_connected": "Este inventário já está conectado a outro terminal.",
-  "message.simplestoragemanager.shift_drag_preview_unavailable": "Arrasto com Shift cancelado: não foi possível calcular uma prévia segura.",
+  "message.simplestoragemanager.shift_drag_preview_unavailable": "Não foi possível inserir. Operação cancelada.",
   "screen.simplestoragemanager.chunk_unloaded": "Chunk do inventário em %s não está carregada.",
   "screen.simplestoragemanager.dimension_missing": "O inventário em %s não está nesta dimensão",
   "screen.simplestoragemanager.connection_lost": "Conexão perdida com o inventário em %s",

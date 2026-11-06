@@ -146,6 +146,14 @@ class StorageManagerLogicTest {
         assertFalse(UpgradeSlotRules.canRemove(UpgradeSlotRules.MIDDLE_SLOT, false, true));
         assertTrue(UpgradeSlotRules.canRemove(UpgradeSlotRules.MIDDLE_SLOT, false, false));
         assertTrue(UpgradeSlotRules.canRemove(UpgradeSlotRules.TOP_SLOT, true, true));
+
+        boolean hasLevel2 = true;
+        boolean hasLevel3 = true;
+        assertTrue(UpgradeSlotRules.canRemove(UpgradeSlotRules.TOP_SLOT, hasLevel2, hasLevel3));
+        hasLevel3 = false;
+        assertTrue(UpgradeSlotRules.canRemove(UpgradeSlotRules.MIDDLE_SLOT, hasLevel2, hasLevel3));
+        hasLevel2 = false;
+        assertTrue(UpgradeSlotRules.canRemove(UpgradeSlotRules.BOTTOM_SLOT, hasLevel2, hasLevel3));
     }
 
     @Test
@@ -205,5 +213,47 @@ class StorageManagerLogicTest {
                 "minecraft:overworld", "minecraft:the_nether", "minecraft:the_end", "mod:one", "mod:two", "mod:three"), registered));
         assertFalse(UpgradeAccessRules.isValidSelection(List.of("mod:one", "mod:one"), registered));
         assertFalse(UpgradeAccessRules.isValidSelection(List.of("mod:missing"), registered));
+    }
+
+    @Test
+    void insertionSpaceUsesItemLimitForConventionalSlots() {
+        // slotMax == 64: the item limit decides when the stack is full.
+        assertEquals(64, TerminalInsertionRules.previewCapacity(0, 64, 64));
+        assertEquals(1, TerminalInsertionRules.previewCapacity(63, 64, 64));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(64, 64, 64));
+        assertEquals(16, TerminalInsertionRules.previewCapacity(0, 64, 16));
+        assertEquals(1, TerminalInsertionRules.previewCapacity(15, 64, 16));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(16, 64, 16));
+        assertEquals(1, TerminalInsertionRules.previewCapacity(0, 64, 1));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(1, 64, 1));
+    }
+
+    @Test
+    void insertionSpaceUsesSlotLimitForOversizedSlotsWhenItemIsStackable() {
+        // slotMax > 64: the slot limit decides while the item is stackable.
+        assertEquals(128, TerminalInsertionRules.previewCapacity(0, 128, 64));
+        assertEquals(64, TerminalInsertionRules.previewCapacity(64, 128, 64));
+        assertEquals(1, TerminalInsertionRules.previewCapacity(127, 128, 64));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(128, 128, 64));
+        assertEquals(128, TerminalInsertionRules.previewCapacity(0, 128, 16));
+        assertEquals(112, TerminalInsertionRules.previewCapacity(16, 128, 16));
+        assertEquals(0, TerminalInsertionRules.previewCapacity(128, 128, 16));
+    }
+
+    @Test
+    void creativeCopyLimitIsBoundedByItemAndSlotLimits() {
+        assertEquals(64, TerminalInsertionRules.creativeCopyLimit(64, 4096));
+        assertEquals(512, TerminalInsertionRules.creativeCopyLimit(1024, 512));
+        assertEquals(64, TerminalInsertionRules.creativeCopyLimit(1024, 64));
+        assertEquals(1, TerminalInsertionRules.creativeCopyLimit(64, 1));
+        assertEquals(0, TerminalInsertionRules.creativeCopyLimit(64, 0));
+    }
+
+    @Test
+    void shiftClickUsesFullStackExtractionAndConfirmedInsertion() {
+        assertEquals(64, TerminalInsertionRules.shiftExtractionCount(64, 64));
+        assertEquals(40, TerminalInsertionRules.shiftExtractionCount(40, 64));
+        assertEquals(32, TerminalInsertionRules.confirmedTransferCount(64, 40, 32));
+        assertEquals(64, TerminalInsertionRules.confirmedTransferCount(64, 64, 64));
     }
 }

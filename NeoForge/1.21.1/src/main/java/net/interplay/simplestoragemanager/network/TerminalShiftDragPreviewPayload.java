@@ -21,7 +21,8 @@ import java.util.UUID;
 @EventBusSubscriber
 public record TerminalShiftDragPreviewPayload(long requestId, boolean complete,
                                               List<SourceResult> sources,
-                                              List<RemoteResult> destinations)
+                                              List<RemoteResult> destinations,
+                                              List<PlayerResult> playerDestinations)
         implements CustomPacketPayload {
     private static final StreamCodec<RegistryFriendlyByteBuf, ItemStack> STACK_CODEC = StreamCodec.of(
             (buffer, stack) -> {
@@ -54,10 +55,16 @@ public record TerminalShiftDragPreviewPayload(long requestId, boolean complete,
             ByteBufCodecs.VAR_INT, RemoteResult::storageSlot,
             STACK_CODEC, RemoteResult::stack,
             RemoteResult::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, PlayerResult> PLAYER_CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_INT, PlayerResult::menuSlot,
+            STACK_CODEC, PlayerResult::stack,
+            PlayerResult::new);
     private static final StreamCodec<RegistryFriendlyByteBuf, List<SourceResult>> SOURCES_CODEC =
             ByteBufCodecs.<RegistryFriendlyByteBuf, SourceResult>list().apply(SOURCE_CODEC);
     private static final StreamCodec<RegistryFriendlyByteBuf, List<RemoteResult>> REMOTES_CODEC =
             ByteBufCodecs.<RegistryFriendlyByteBuf, RemoteResult>list().apply(REMOTE_CODEC);
+    private static final StreamCodec<RegistryFriendlyByteBuf, List<PlayerResult>> PLAYERS_CODEC =
+            ByteBufCodecs.<RegistryFriendlyByteBuf, PlayerResult>list().apply(PLAYER_CODEC);
     public static final Type<TerminalShiftDragPreviewPayload> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath(SimplestoragemanagerMod.MODID, "terminal_shift_drag_preview_result"));
     public static final StreamCodec<RegistryFriendlyByteBuf, TerminalShiftDragPreviewPayload> STREAM_CODEC =
@@ -66,11 +73,13 @@ public record TerminalShiftDragPreviewPayload(long requestId, boolean complete,
                     ByteBufCodecs.BOOL, TerminalShiftDragPreviewPayload::complete,
                     SOURCES_CODEC, TerminalShiftDragPreviewPayload::sources,
                     REMOTES_CODEC, TerminalShiftDragPreviewPayload::destinations,
+                    PLAYERS_CODEC, TerminalShiftDragPreviewPayload::playerDestinations,
                     TerminalShiftDragPreviewPayload::new);
 
     public TerminalShiftDragPreviewPayload {
         sources = List.copyOf(sources);
         destinations = List.copyOf(destinations);
+        playerDestinations = List.copyOf(playerDestinations);
     }
 
     @Override
@@ -100,6 +109,17 @@ public record TerminalShiftDragPreviewPayload(long requestId, boolean complete,
         @Override
         public ItemStack remaining() {
             return remaining.copy();
+        }
+    }
+
+    public record PlayerResult(int menuSlot, ItemStack stack) {
+        public PlayerResult {
+            stack = stack == null ? ItemStack.EMPTY : stack.copy();
+        }
+
+        @Override
+        public ItemStack stack() {
+            return stack.copy();
         }
     }
 

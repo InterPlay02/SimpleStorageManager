@@ -23,6 +23,22 @@ class ManualExtractionRulesTest {
     }
 
     @Test
+    void leftClickExtractionTakesTheWholeStack() {
+        assertEquals(64, TerminalInsertionRules.extractionCount(64, 64, false));
+        assertEquals(9, TerminalInsertionRules.extractionCount(9, 64, false));
+        assertEquals(0, TerminalInsertionRules.extractionCount(0, 64, false));
+    }
+
+    @Test
+    void rightClickExtractionTakesHalfRoundedUpAndRespectsItemLimit() {
+        assertEquals(5, ManualExtractionRules.rightClickAmount(9, 64));
+        assertEquals(1, ManualExtractionRules.rightClickAmount(1, 64));
+        assertEquals(0, ManualExtractionRules.rightClickAmount(0, 64));
+        assertEquals(8, ManualExtractionRules.rightClickAmount(50, 16));
+        assertEquals(1, ManualExtractionRules.rightClickAmount(50, 1));
+    }
+
+    @Test
     void extractionConservesItemsBetweenInventoryAndCursor() {
         int inventoryBefore = 65;
         int cursorBefore = 0;

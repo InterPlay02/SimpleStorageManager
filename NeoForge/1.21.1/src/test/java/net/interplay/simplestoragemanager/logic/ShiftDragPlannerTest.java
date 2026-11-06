@@ -76,6 +76,31 @@ class ShiftDragPlannerTest {
     }
 
     @Test
+    void upgradeArmorAndCraftingSourcesShareLimitedPlayerInventoryCapacity() {
+        ShiftDragPlanner.Plan plan = ShiftDragPlanner.plan(
+                List.of(source(70, 4), source(71, 4), source(72, 4)),
+                List.of(slot(0, 62, 64, 64), slot(1, 0, 0, 3)));
+
+        assertEquals(List.of(64, 3), counts(plan));
+        assertEquals(List.of(0, 3, 4), plan.sources().stream()
+                .map(ShiftDragPlanner.SourceResult::remaining).toList());
+        assertEquals(List.of(2, 2, 1), transferCounts(plan));
+    }
+
+    @Test
+    void specialExtractionLeavesIncompatiblePlayerStacksUntouched() {
+        ShiftDragPlanner.Plan plan = ShiftDragPlanner.plan(
+                List.of(source(80, 4)),
+                List.of(slot(0, 0, 0, 64),
+                        new ShiftDragPlanner.Destination(0, 1, -2, 5, Set.of(), Map.of(), Map.of())));
+
+        assertEquals(List.of(4, 5), counts(plan));
+        assertEquals(-2, plan.destinations().get(1).itemType());
+        assertEquals(List.of(0), plan.sources().stream()
+                .map(ShiftDragPlanner.SourceResult::remaining).toList());
+    }
+
+    @Test
     void slotAndItemLimitsStayIndependentForEachStrategy() {
         assertEquals(16, ShiftDragInsertionRules.vanillaTotalLimit(64, 16));
         assertEquals(16, ShiftDragInsertionRules.moddedTotalLimit(64, 16));
@@ -97,6 +122,22 @@ class ShiftDragPlannerTest {
                 new ShiftDragPlanner.Transfer(60, 0, 0, 2, false),
                 new ShiftDragPlanner.Transfer(61, 1, 0, 4, false)), plan.transfers());
         assertEquals(List.of(4, 4), counts(plan));
+    }
+
+    @Test
+    void shiftDragFromPlayerPilesWithoutOriginAccumulatesIntoSingleSlot() {
+        List<ShiftDragPlanner.Source> sources = List.of(
+                new ShiftDragPlanner.Source(0, 0, 10, false, 0),
+                new ShiftDragPlanner.Source(1, 0, 10, false, 0),
+                new ShiftDragPlanner.Source(2, 0, 10, false, 0),
+                new ShiftDragPlanner.Source(3, 0, 10, false, 0),
+                new ShiftDragPlanner.Source(4, 0, 10, false, 0),
+                new ShiftDragPlanner.Source(5, 0, 14, false, 0));
+        ShiftDragPlanner.Plan plan = ShiftDragPlanner.plan(sources, List.of(slot(0, 0, 0, 64)));
+
+        assertEquals(List.of(64), counts(plan));
+        assertEquals(List.of(0, 0, 0, 0, 0, 0), plan.sources().stream()
+                .map(ShiftDragPlanner.SourceResult::remaining).toList());
     }
 
     private static ShiftDragPlanner.Source source(int slot, int count) {

@@ -18,7 +18,7 @@
   "message.simplestoragemanager.terminal_not_owner": "Only the terminal owner can modify connected inventories.",
   "message.simplestoragemanager.terminal_not_owner_connection": "Only the terminal owner can connect or disconnect inventories.",
   "message.simplestoragemanager.inventory_already_connected": "This inventory is already connected to another terminal.",
-  "message.simplestoragemanager.shift_drag_preview_unavailable": "Shift-drag cancelled: a safe preview could not be calculated.",
+  "message.simplestoragemanager.shift_drag_preview_unavailable": "Insertion failed. Operation cancelled.",
   "screen.simplestoragemanager.chunk_unloaded": "Chunk for inventory at %s is not loaded.",
   "screen.simplestoragemanager.dimension_missing": "The inventory at %s is not in this dimension",
   "screen.simplestoragemanager.connection_lost": "Connection lost with inventory at %s",

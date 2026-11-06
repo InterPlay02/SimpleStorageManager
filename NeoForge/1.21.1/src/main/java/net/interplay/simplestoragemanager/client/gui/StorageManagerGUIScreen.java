@@ -28,6 +28,8 @@ import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
 import net.interplay.simplestoragemanager.logic.TerminalScaleChoice;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
+import net.interplay.simplestoragemanager.logic.UpgradeSlotRules;
+import net.interplay.simplestoragemanager.logic.ManualInsertionRules;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModScreens;
 
@@ -516,6 +518,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         if (!isInside(variant.searchArea(), mouseX, mouseY) && searchBar != null && searchBar.isFocused()) {
             setFocused(null);
         }
+        if (isInside(variant.searchArea(), mouseX, mouseY)) {
+            if (button == 1 && searchBar != null) {
+                searchBar.setValue("");
+                setFocused(searchBar);
+                return true;
+            }
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         if (pendingOperationSequence > 0 && button == 0 && hasShiftDown()) return true;
         if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
             if (button == 0) PacketDistributor.sendToServer(new TerminalLockTogglePayload());
@@ -526,7 +536,6 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             return true;
         }
         if (clickNotice(mouseX, mouseY)) return true;
-        if (isInside(variant.searchArea(), mouseX, mouseY)) return super.mouseClicked(mouseX, mouseY, button);
         RemoteHit remoteHit = remoteHitAt(mouseX, mouseY);
         if (remoteHit != null) {
             if (!view.canMutateInventories()) return true;
@@ -596,6 +605,68 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private boolean isCreativePickButton(int button) {
         return player.getAbilities().instabuild
                 && minecraft.options.keyPickItem.isActiveAndMatches(InputConstants.Type.MOUSE.getOrCreate(button));
+    }
+
+    // Locked terminals: a manual drag without shift may only start inside the origin inventory of
+    // the cursor stack or in an authorized inventory slot; starts elsewhere are cancelled before
+    // the drag begins.
+    private boolean isManualDragStartAllowed(ItemStack carried, boolean startInOriginInventory, boolean startInPlayerInventory) {
+        if (carried.isEmpty() || !view.locked()) return true;
+        boolean carriedHasOrigin = false;
+        for (TerminalViewPayload.OriginTarget origin : view.originTargets()) {
+            if (ItemStack.isSameItemSameComponents(origin.item(), carried)) {
+                carriedHasOrigin = true;
+                break;
+            }
+        }
+        if (!carriedHasOrigin) return true;
+        return ManualInsertionRules.isManualDragStartAllowed(view.locked(), carriedHasOrigin, startInOriginInventory, startInPlayerInventory);
+    }
+
+    private boolean isPlayerInventoryDragStartSlot(int slotIndex) {
+        return slotIndex >= menu.mainInventoryStart && slotIndex < menu.hotbarStart + 9;
+    }
+
+    private boolean isCraftingDragStartSlot(int slotIndex) {
+        return slotIndex >= menu.craftingGridStart && slotIndex < menu.craftingGridStart + 9;
+    }
+
+    private boolean isRemoteDragStartInOrigin(RemoteHit hit) {
+        ItemStack carried = menu.getCarried();
+        if (carried.isEmpty() || !view.locked()) return true;
+        List<TerminalViewPayload.OriginTarget> origins = view.originTargets();
+        boolean carriedHasOrigin = false;
+        for (TerminalViewPayload.OriginTarget origin : origins) {
+            if (ItemStack.isSameItemSameComponents(origin.item(), carried)) {
+                carriedHasOrigin = true;
+                break;
+            }
+        }
+        if (!carriedHasOrigin) return true;
+        UUID hitConnectionId = remoteConnectionIds.get(key(hit.section(), hit.slot()));
+        UUID originConnectionId = null;
+        for (TerminalViewPayload.OriginTarget origin : origins) {
+            if (!ItemStack.isSameItemSameComponents(origin.item(), carried)) continue;
+            UUID candidate = remoteConnectionIds.get(key(origin.section(), origin.slot()));
+            if (candidate != null) {
+                originConnectionId = candidate;
+                break;
+            }
+        }
+        return originConnectionId != null && hitConnectionId != null && hitConnectionId.equals(originConnectionId);
+    }
+
+    private void clearItemDragState() {
+        itemDragButton = -1;
+        itemDragShift = false;
+        itemDragMoved = false;
+        itemDragCreative = false;
+        itemDragStartSlot = -1;
+        itemDragSlots.clear();
+        remoteDragMode = 0;
+        remoteDragShift = false;
+        remoteDragTargets.clear();
+        remoteDragInitialCarried = ItemStack.EMPTY;
     }
 
     private void beginRemoteDrag(RemoteHit hit, int button, boolean shift, boolean creative) {
@@ -696,9 +767,72 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private void updateShiftPreview() {
         playerPreviewItems.clear();
         remotePreviewItems.clear();
+        if (isUpgradeExtractionShiftDrag()) updateUpgradeExtractionPreview();
         latestShiftPreviewRequestId = ++nextShiftPreviewRequestId;
         PacketDistributor.sendToServer(new TerminalShiftDragPreviewRequestPayload(
                 latestShiftPreviewRequestId, List.copyOf(itemDragSlots)));
+    }
+
+    private boolean isUpgradeExtractionShiftDrag() {
+        return itemDragShift && itemDragStartSlot >= menu.upgradeStart
+                && itemDragStartSlot < menu.upgradeStart + 3
+                && !itemDragSlots.isEmpty()
+                && itemDragSlots.stream().allMatch(index ->
+                index >= menu.upgradeStart && index < menu.upgradeStart + 3);
+    }
+
+    private void updateUpgradeExtractionPreview() {
+        boolean hasLevel2 = !menu.slots.get(menu.upgradeStart + UpgradeSlotRules.MIDDLE_SLOT)
+                .getItem().isEmpty();
+        boolean hasLevel3 = !menu.slots.get(menu.upgradeStart + UpgradeSlotRules.TOP_SLOT)
+                .getItem().isEmpty();
+        Map<Integer, ItemStack> playerStacks = new HashMap<>();
+        Map<Integer, ItemStack> originalPlayerStacks = new HashMap<>();
+        for (int index = menu.mainInventoryStart; index < menu.hotbarStart + 9; index++) {
+            if (menu.isTerminalSlot(index)) continue;
+            ItemStack stack = menu.slots.get(index).getItem().copy();
+            playerStacks.put(index, stack);
+            originalPlayerStacks.put(index, stack.copy());
+        }
+
+        for (int sourceIndex : itemDragSlots) {
+            int upgradeSlot = sourceIndex - menu.upgradeStart;
+            if (!UpgradeSlotRules.canRemove(upgradeSlot, hasLevel2, hasLevel3)) continue;
+            ItemStack source = menu.slots.get(sourceIndex).getItem().copy();
+            if (source.isEmpty()) continue;
+            ItemStack moving = source.copy();
+            for (int pass = 0; pass < 2 && !moving.isEmpty(); pass++) {
+                for (int targetIndex = menu.mainInventoryStart;
+                     targetIndex < menu.hotbarStart + 9 && !moving.isEmpty(); targetIndex++) {
+                    Slot target = menu.slots.get(targetIndex);
+                    if (menu.isTerminalSlot(targetIndex) || !target.mayPlace(moving)) continue;
+                    ItemStack existing = playerStacks.get(targetIndex);
+                    if (pass == 0 && (existing.isEmpty()
+                            || !ItemStack.isSameItemSameComponents(existing, moving))) continue;
+                    if (pass == 1 && !existing.isEmpty()) continue;
+                    int currentCount = existing.isEmpty() ? 0 : existing.getCount();
+                    int limit = Math.min(moving.getMaxStackSize(), target.getMaxStackSize(moving));
+                    int accepted = Math.min(moving.getCount(), Math.max(0, limit - currentCount));
+                    if (accepted <= 0) continue;
+                    playerStacks.put(targetIndex, existing.isEmpty()
+                            ? moving.copyWithCount(accepted)
+                            : existing.copyWithCount(currentCount + accepted));
+                    moving.shrink(accepted);
+                }
+            }
+            if (moving.getCount() != source.getCount()) {
+                playerPreviewItems.put(sourceIndex, moving);
+            }
+            if (moving.isEmpty()) {
+                if (upgradeSlot == UpgradeSlotRules.TOP_SLOT) hasLevel3 = false;
+                if (upgradeSlot == UpgradeSlotRules.MIDDLE_SLOT) hasLevel2 = false;
+            }
+        }
+        for (Map.Entry<Integer, ItemStack> entry : playerStacks.entrySet()) {
+            if (!ItemStack.matches(originalPlayerStacks.get(entry.getKey()), entry.getValue())) {
+                playerPreviewItems.put(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     public void applyShiftDragPreview(TerminalShiftDragPreviewPayload payload) {
@@ -722,6 +856,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                     playerPreviewItems.put(source.menuSlot(), source.remaining());
                 }
             }
+            for (TerminalShiftDragPreviewPayload.PlayerResult destination : payload.playerDestinations()) {
+                if (destination.menuSlot() >= 0 && destination.menuSlot() < menu.slots.size()) {
+                    playerPreviewItems.put(destination.menuSlot(), destination.stack());
+                }
+            }
             for (TerminalShiftDragPreviewPayload.RemoteResult destination : payload.destinations()) {
                 remotePreviewItems.put(key(destination.section(), destination.slot()), destination.stack());
             }
@@ -737,7 +876,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         if (shiftOperation && pendingOperationSequence == 0) {
             pendingOperationSequence = ++nextOperationSequence;
         }
-        if (shiftOperation && !itemDragSlots.isEmpty()
+        if (shiftOperation && !(isUpgradeExtractionShiftDrag() && itemDragMoved) && !itemDragSlots.isEmpty()
                 && appliedShiftPreviewRequestId != latestShiftPreviewRequestId) {
             shiftDragCommitPending = true;
             itemDragButton = -1;
@@ -803,7 +942,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private void sendShiftDragCommit() {
         PacketDistributor.sendToServer(new TerminalStorageClickPayload(-1, -1, 0, true,
                 List.of(), List.copyOf(itemDragSlots), pendingOperationSequence,
-                latestShiftPreviewRequestId));
+                isUpgradeExtractionShiftDrag() && itemDragMoved ? 0 : latestShiftPreviewRequestId));
         shiftDragCommitPending = false;
         itemDragButton = -1;
         itemDragShift = false;
@@ -1051,6 +1190,28 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (itemDragButton >= 0 && button == itemDragButton) {
+            if (!itemDragMoved && !itemDragShift && !itemDragCreative && !menu.getCarried().isEmpty()) {
+                // A manual drag without shift may only start inside the origin inventory of the
+                // cursor stack or in a slot of the player's own inventory; an invalid start cancels
+                // the operation before execution.
+                if (itemDragStartSlot < 0) {
+                    if (!remoteDragTargets.isEmpty()) {
+                        TerminalStorageClickPayload.SlotTarget startTarget =
+                                remoteDragTargets.get(0);
+                        RemoteHit startHit = new RemoteHit(startTarget.section(), startTarget.slot(),
+                                ItemStack.EMPTY);
+                        if (!isManualDragStartAllowed(menu.getCarried(),
+                                isRemoteDragStartInOrigin(startHit), false)) {
+                            clearItemDragState();
+                            return true;
+                        }
+                    }
+                } else if (!isManualDragStartAllowed(menu.getCarried(), false,
+                        isPlayerInventoryDragStartSlot(itemDragStartSlot) || isCraftingDragStartSlot(itemDragStartSlot))) {
+                    clearItemDragState();
+                    return true;
+                }
+            }
             addStaticDragTarget(staticSlotAt(mouseX, mouseY));
             if (itemDragButton < 0) return true;
             addRemoteDragTarget(remoteHitAt(mouseX, mouseY));
