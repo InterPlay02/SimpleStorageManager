@@ -1588,9 +1588,24 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         }
         if (!carried.isEmpty() && supportsSophisticatedManualClick(adapter, slot)) {
             ItemStack existing = handler.getStackInSlot(slot);
-            if (button == 0 && !existing.isEmpty()
-                    && !ItemStack.isSameItemSameComponents(existing, carried)) {
-                return swapRemoteSlot(adapter, slot, carried, button);
+            if (button == 0 && !existing.isEmpty()) {
+                if (ItemStack.isSameItemSameComponents(existing, carried)) {
+                    // Same item: the real slot capacity decides. With room, insert and sum the
+                    // quantities; when the slot is full, end the operation without inserting or
+                    // swapping. Extraction keeps its own flow, which only runs with an empty cursor.
+                    if (SophisticatedStorageManualClicks.simulatedCapacity(world, adapter, slot, carried) > 0) {
+                        int requested = ManualInsertionRules.clickRequest(carried.getCount(), button == 1);
+                        int inserted = SophisticatedStorageManualClicks.insert(world, adapter, slot, carried, requested);
+                        setCarried(carried);
+                        return Math.max(0, inserted);
+                    }
+                    return 0;
+                }
+                // Different item: swap only when the slot holds a single full stack or less.
+                if (existing.getCount() <= existing.getMaxStackSize()) {
+                    return swapRemoteSlot(adapter, slot, carried, button);
+                }
+                return 0;
             }
             int requested = ManualInsertionRules.clickRequest(carried.getCount(), button == 1);
             int inserted = SophisticatedStorageManualClicks.insert(world, adapter, slot, carried, requested);
@@ -1598,6 +1613,26 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             return Math.max(0, inserted);
         }
         if (!carried.isEmpty() && supportsStorageDrawersManualClick(adapter, slot)) {
+            ItemStack existing = handler.getStackInSlot(slot);
+            if (button == 0 && !existing.isEmpty()) {
+                if (ItemStack.isSameItemSameComponents(existing, carried)) {
+                    // Same item: the real slot capacity decides. With room, insert and sum the
+                    // quantities; when the slot is full, end the operation without inserting or
+                    // swapping. Extraction keeps its own flow, which only runs with an empty cursor.
+                    if (StorageDrawersManualClicks.simulatedCapacity(world, adapter, slot, carried) > 0) {
+                        int requested = ManualInsertionRules.clickRequest(carried.getCount(), button == 1);
+                        int inserted = StorageDrawersManualClicks.insert(world, adapter, slot, carried, requested);
+                        setCarried(carried);
+                        return Math.max(0, inserted);
+                    }
+                    return 0;
+                }
+                // Different item: swap only when the slot holds a single full stack or less.
+                if (existing.getCount() <= existing.getMaxStackSize()) {
+                    return swapRemoteSlot(adapter, slot, carried, button);
+                }
+                return 0;
+            }
             int requested = ManualInsertionRules.clickRequest(carried.getCount(), button == 1);
             int inserted = StorageDrawersManualClicks.insert(world, adapter, slot, carried, requested);
             setCarried(carried);

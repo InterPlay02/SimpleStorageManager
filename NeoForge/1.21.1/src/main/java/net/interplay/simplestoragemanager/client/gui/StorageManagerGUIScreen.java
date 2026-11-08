@@ -839,8 +839,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         if ((!itemDragShift && !shiftDragCommitPending)
                 || payload.requestId() != latestShiftPreviewRequestId) return;
         appliedShiftPreviewRequestId = payload.requestId();
-        playerPreviewItems.clear();
-        remotePreviewItems.clear();
+        // While a shift-drag is still being planned or applied, an incomplete response must not wipe
+        // the current preview: the drag keeps moving and the display has to hold a consistent state
+        // until the plan for the current drag is known.
+        boolean applies = payload.complete() || !(itemDragShift || shiftDragCommitPending);
+        if (applies) {
+            playerPreviewItems.clear();
+            remotePreviewItems.clear();
+        }
         if (payload.complete()) {
             for (TerminalShiftDragPreviewPayload.RemoteResult destination : payload.destinations()) {
                 long slotKey = key(destination.section(), destination.slot());
@@ -1252,7 +1258,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (isInside(variant.contentArea(), mouseX, mouseY) || isInside(variant.scrollTrack(), mouseX, mouseY)) {
-            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 12);
+            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 18);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);

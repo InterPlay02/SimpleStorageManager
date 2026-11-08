@@ -14,6 +14,7 @@ runs/
 *.iml
 out/
 .vscode/
+.dsh/
 
 # MCreator (histórico local e workspace interno)
 .mcreator/

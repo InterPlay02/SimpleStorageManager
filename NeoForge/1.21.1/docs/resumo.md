@@ -35,7 +35,6 @@ Versão do Java: 21
 - O servidor reavalia a disponibilidade das conexões abertas a cada 20 ticks (um contador por menu) e envia atualizações apenas para conexões cujo estado mudou. Verificações ativas em operações reiniciam o contador; depósitos, retiradas e devoluções da grade consultam novamente o alcance e os chunks no momento da operação.
 - Os títulos dos inventários conectados usam o `Component` retornado por `Nameable.getDisplayName()` da entidade de bloco conectada, com o nome do bloco como fallback. O componente segue sem conversão para texto bruto pelo payload até ser renderizado na GUI.
 - Cliques manuais em inventários Sophisticated preservam o índice usando `InventoryHandler.insertItemOnlyToSlot`, com simulação e débito do cursor pela quantidade aceita na execução. A mochila Sophisticated é resolvida quando colocada como bloco (`BackpackBlockEntity`); seu handler exposto é associado ao `InventoryHandler` interno. Storage Drawers expõe somente os drawers físicos, em ordem estável por posição no grupo, mesmo quando o protótipo altera a ordem dinâmica do handler; o slot virtual interno 0 não aparece no terminal. A integração escreve pela API pública `IDrawerGroup`/`IDrawer`, sem usar o full scan de `insertItem`. A quantidade debitada é a diferença medida na contagem da gaveta. Os demais handlers continuam no caminho genérico; extração e shift mantêm suas regras com o índice traduzido para a ordem física estável.
-- Arrastos manuais esquerdo/direito preservam os slots visitados: o esquerdo divide a quantidade igualmente entre os destinos considerados aceitantes, e o direito oferece um item por destino. A capacidade medida das integrações diretas limita cada inserção; se a execução aceitar menos que o planejado, o excedente permanece no cursor. `ManualInsertionRules.planDrag` faz esse cálculo no servidor; ele implementa a divisão em código próprio e não chama diretamente `AbstractContainerMenu.getQuickCraftPlaceCount`. Arrastos criativos continuam no caminho próprio, após validação de modo e capacidade.
 - Em terminal com cadeado trancado, o início de arrasto manual sem Shift é autorizado apenas no inventário de origem da pilha do cursor ou em slot autorizado (inventário principal/hotbar ou Crafting Grid); qualquer outro início é cancelado antes da execução, sem consumir cursor ou alterar inventários.
 - Snapshots de inventários conectados serializam a quantidade separadamente dos dados do item para não herdar o limite de 99 do codec Vanilla de `ItemStack`; a quantidade segue o limite inteiro do handler e o cliente também recebe a capacidade por slot para prever inserções em pilhas acima do máximo padrão.
 - Na GUI, contagens acima de 999 são desenhadas em escala reduzida. Arrastos de inserção são confirmados automaticamente segundo as condições de término específicas de cada botão, sem esperar a liberação do botão quando a distribuição já terminou.
@@ -142,6 +141,35 @@ Matriz de validação manual pendente: repetir as operações de clique, shift-c
 `DimensionalUpgradeSelectionScreen` mostra as dimensões recebidas do servidor, mantém alterações apenas localmente até Salvar e descarta-as ao Cancelar. A lista usa o scroller existente e a roda do mouse. Abertura, salvamento e resposta de validação são tratados por `DimensionalUpgradeOpenPayload`, `DimensionalUpgradeSavePayload` e `DimensionalUpgradeSaveResultPayload`. As chaves de tradução da tela estão em `lang/en_us.json` e `lang/pt_br.json`, sob `screen.simplestoragemanager.dimension_selector.*`.
 
 Os testes JUnit cobrem o nível efetivo, as regras de distância e dimensão dos níveis 0–3 e a validação de seleção vazia, limite de cinco, duplicatas e dimensões não registradas.
+
+## Clique simples, shift-click, arrasto e arrasto sem shift — funcionamento atual
+
+Esta seção registra o funcionamento atual de cada clique/arrasto contra inventários conectados, com foco nos cliques de mouse (esquerdo e direito) e em arrastos, com e sem shift, para inserção e extração.
+
+### Clique simples com item no cursor (sem shift)
+
+- Botão direito (1): se o item do slot for diferente do item do cursor → swap (1:1, exigindo pilha única). Se for o mesmo item → insere 1 unidade (limitando ao espaço disponível).
+- Botão esquerdo (0): se o item do slot for diferente do item do cursor → swap, permitido apenas quando a pilha do slot tem quantidade ≤ limite do item (`existing.getCount() <= existing.getMaxStackSize()`); caso contrário nada acontece. Se for o mesmo item → consulta a capacidade real do slot (`simulatedCapacity` para Sophisticated Storage/Storage Drawers, `insertRemoteSlot` para handlers genéricos): com espaço → insere/soma as quantidades (excedente permanece no cursor); sem espaço → nada (sem swap, sem inserção).
+
+### Clique simples com shift (shift-click)
+
+- Extração com shift: rota dedicada (`shiftRemoval`) que envia intenção ao servidor e executa a extração conforme as regras de extração.
+
+### Arrasto sem shift
+
+- Início: `StorageManagerGUIMenu.handleRemoteDrag` (servidor), disparado pelo payload do cliente quando o arrasto começa sem shift.
+- Botão esquerdo: `requested = carried.getCount()`; botão direito: `requested = min(carried.getCount(), targets)`.
+- Prioridade de origem (cadeado trancado): com cursor com registro de origem e nenhum destino sendo a origem → devolução à origem via `insertIntoRememberedOrigins` antes da distribuição; excedente segue para os destinos visitados.
+- Distribuição: `ManualInsertionRules.planDrag`; integrações específicas (Sophisticated/Storage Drawers) usam os slots manuais quando suportados.
+
+### Arrasto com shift (shift-drag)
+
+- `handleRemoteShiftDrag` / `ShiftDragPlanner`: devolução primeiro aos origins lembrados, depois destino remoto por tipo de item; preview cumulativa via `TerminalShiftDragPreviewPayload`.
+
+### Extração (clique e arrasto de saída)
+
+- Sem shift: clique esquerdo extrai limite do item (`extractionCount`); clique direito extrai metade (`rightClickAmount`).
+- Com shift: extração via rota shift.
 
 ## Comportamentos esperados para cada click que interage com a área principal da GUI do terminal
 
