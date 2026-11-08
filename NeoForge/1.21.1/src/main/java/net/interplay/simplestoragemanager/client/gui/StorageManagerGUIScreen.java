@@ -104,6 +104,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private long latestShiftPreviewRequestId;
     private long appliedShiftPreviewRequestId;
     private boolean shiftDragCommitPending;
+    private final Map<Integer, ItemStack> visualPlayerPreviewItems = new HashMap<>();
+    private final Map<Long, ItemStack> visualRemotePreviewItems = new HashMap<>();
+    private ItemStack visualRemotePreviewCarried;
 
     public StorageManagerGUIScreen(StorageManagerGUIMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -297,7 +300,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 int x = area.left() + (slot % 9) * SLOT_SIZE;
                 int y = slotY + (slot / 9) * SLOT_SIZE;
                 graphics.blit(SLOT_TEXTURE, leftPos + x, topPos + y, 0, 0, 18, 18, 18, 18);
-                ItemStack stack = remotePreviewItems.getOrDefault(key(index, slot),
+                ItemStack stack = visualRemotePreviewItems.getOrDefault(key(index, slot),
                         remoteItems.getOrDefault(key(index, slot), ItemStack.EMPTY));
                 if (!stack.isEmpty()) {
                     graphics.renderItem(stack, leftPos + x + TerminalScreenLayout.ITEM_OFFSET,
@@ -434,7 +437,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     }
 
     private void renderSlotItem(GuiGraphics graphics, Slot slot, TerminalScreenLayout.Point point) {
-        ItemStack stack = playerPreviewItems.getOrDefault(slot.index, slot.getItem());
+        ItemStack stack = visualPlayerPreviewItems.getOrDefault(slot.index, slot.getItem());
         if (stack.isEmpty()) return;
         graphics.renderItem(stack, leftPos + point.x() + 1, topPos + point.y() + 1);
         renderItemDecorations(graphics, stack, leftPos + point.x() + 1, topPos + point.y() + 1);
@@ -476,9 +479,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         ItemStack carried = menu.getCarried();
-        if (remotePreviewCarried != null) menu.setCarried(remotePreviewCarried.copy());
+        if (visualRemotePreviewCarried != null) menu.setCarried(visualRemotePreviewCarried.copy());
         super.render(graphics, mouseX, mouseY, partialTick);
-        if (remotePreviewCarried != null) menu.setCarried(carried);
+        if (visualRemotePreviewCarried != null) menu.setCarried(carried);
         if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
             graphics.renderTooltip(font, Component.translatable("gui.simplestoragemanager.storage_manager_gui.clear_crafting"),
                     mouseX, mouseY);
@@ -762,12 +765,16 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         playerPreviewItems.putAll(working);
         remotePreviewCarried = itemDragCreative ? remoteDragInitialCarried.copy() : remaining;
+        publishVisualPreview();
     }
 
     private void updateShiftPreview() {
-        playerPreviewItems.clear();
-        remotePreviewItems.clear();
-        if (isUpgradeExtractionShiftDrag()) updateUpgradeExtractionPreview();
+        if (isUpgradeExtractionShiftDrag()) {
+            playerPreviewItems.clear();
+            remotePreviewItems.clear();
+            updateUpgradeExtractionPreview();
+            publishVisualPreview();
+        }
         latestShiftPreviewRequestId = ++nextShiftPreviewRequestId;
         PacketDistributor.sendToServer(new TerminalShiftDragPreviewRequestPayload(
                 latestShiftPreviewRequestId, List.copyOf(itemDragSlots)));
@@ -846,6 +853,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         if (applies) {
             playerPreviewItems.clear();
             remotePreviewItems.clear();
+            visualPlayerPreviewItems.clear();
+            visualRemotePreviewItems.clear();
+            visualRemotePreviewCarried = null;
         }
         if (payload.complete()) {
             for (TerminalShiftDragPreviewPayload.RemoteResult destination : payload.destinations()) {
@@ -870,6 +880,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             for (TerminalShiftDragPreviewPayload.RemoteResult destination : payload.destinations()) {
                 remotePreviewItems.put(key(destination.section(), destination.slot()), destination.stack());
             }
+            publishVisualPreview();
         }
         if (shiftDragCommitPending) {
             sendShiftDragCommit();
@@ -1043,6 +1054,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 remotePreviewItems.put(slotKey, source);
             }
             remotePreviewCarried = ItemStack.EMPTY;
+            publishVisualPreview();
             return;
         }
         List<TerminalStorageClickPayload.SlotTarget> eligible = new ArrayList<>();
@@ -1087,6 +1099,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         remotePreviewItems.putAll(working);
         remotePreviewCarried = remoteDragMode == 2 ? remoteDragInitialCarried.copy() : remaining;
+        publishVisualPreview();
     }
 
     private void insertPreviewIntoPlayerInventory(ItemStack moving) {
@@ -1112,6 +1125,21 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         remotePreviewItems.clear();
         playerPreviewItems.clear();
         remotePreviewCarried = null;
+        clearVisualPreview();
+    }
+
+    private void publishVisualPreview() {
+        visualPlayerPreviewItems.clear();
+        visualPlayerPreviewItems.putAll(playerPreviewItems);
+        visualRemotePreviewItems.clear();
+        visualRemotePreviewItems.putAll(remotePreviewItems);
+        visualRemotePreviewCarried = remotePreviewCarried;
+    }
+
+    private void clearVisualPreview() {
+        visualPlayerPreviewItems.clear();
+        visualRemotePreviewItems.clear();
+        visualRemotePreviewCarried = null;
     }
 
     private RemoteHit remoteHitAt(double mouseX, double mouseY) {
@@ -1132,7 +1160,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 int currentY = slotY + (slot / 9) * SLOT_SIZE;
                 if (x >= slotX && x < slotX + SLOT_SIZE && y >= currentY && y < currentY + SLOT_SIZE) {
                     return new RemoteHit(entry.sectionIndex(), slot,
-                            remoteItems.getOrDefault(key(entry.sectionIndex(), slot), ItemStack.EMPTY));
+                            visualRemotePreviewItems.getOrDefault(key(entry.sectionIndex(), slot),
+                                    remoteItems.getOrDefault(key(entry.sectionIndex(), slot), ItemStack.EMPTY)));
                 }
             }
             cursor += sectionHeight(section.slotCount());
