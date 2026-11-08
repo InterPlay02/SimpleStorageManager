@@ -1482,7 +1482,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 SourceSnapshot current = sources.get(i);
                 SourceSnapshot previous = other.sources.get(i);
                 if (current.menuSlot() != previous.menuSlot()
-                        || !ItemStack.matches(current.stack(), previous.stack())) return false;
+                        || !shiftDragTransferStackMatches(current.stack(), previous.stack())) return false;
             }
             for (int i = 0; i < destinations.size(); i++) {
                 DestinationSnapshot current = destinations.get(i);
@@ -1492,7 +1492,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                         || current.handlerSlot() != previous.handlerSlot()
                         || current.slotLimit() != previous.slotLimit()
                         || current.implementationKind() != previous.implementationKind()
-                        || !ItemStack.matches(current.stack(), previous.stack())) return false;
+                        || !shiftDragTransferStackMatches(current.stack(), previous.stack())) return false;
             }
             for (int i = 0; i < playerDestinations.size(); i++) {
                 PlayerDestinationSnapshot current = playerDestinations.get(i);
@@ -1500,9 +1500,18 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 if (current.menuSlot() != previous.menuSlot()
                         || current.slotLimit() != previous.slotLimit()
                         || !current.maxCounts().equals(previous.maxCounts())
-                        || !ItemStack.matches(current.stack(), previous.stack())) return false;
+                        || !shiftDragTransferStackMatches(current.stack(), previous.stack())) return false;
             }
             return true;
+        }
+
+        private static boolean shiftDragTransferStackMatches(ItemStack current, ItemStack previous) {
+            if (current.isEmpty() || previous.isEmpty()) return current.isEmpty() && previous.isEmpty();
+            if (current.getCount() != previous.getCount()) return false;
+            // The shift-drag transfer only depends on the item identity and the quantity being moved.
+            // Internal mutable state of an item (such as stored energy) may change after the preview and
+            // does not invalidate an otherwise valid transfer on its own.
+            return current.getItem() == previous.getItem();
         }
     }
 

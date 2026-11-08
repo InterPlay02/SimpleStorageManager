@@ -1287,7 +1287,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (isInside(variant.contentArea(), mouseX, mouseY) || isInside(variant.scrollTrack(), mouseX, mouseY)) {
-            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 18);
+            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 27);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
