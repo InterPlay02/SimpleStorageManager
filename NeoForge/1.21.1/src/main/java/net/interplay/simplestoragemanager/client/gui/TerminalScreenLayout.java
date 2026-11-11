@@ -11,6 +11,8 @@ public final class TerminalScreenLayout {
     public static final int LOCK_BUTTON_SIZE = 10;
     public static final int ALERT_ICON_SIZE = 10;
     public static final int SEARCH_LEFT_INSET = 1;
+    /** Horizontal limit of every terminal section title box; titles scroll inside it. */
+    public static final int TITLE_BOX_WIDTH = 131;
 
     public static final Variant SMALL = new Variant(
             216, 230,

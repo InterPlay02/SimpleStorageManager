@@ -35,6 +35,7 @@ public final class TerminalSavedData extends SavedData {
     private final Map<UUID, List<Notice>> notices = new HashMap<>();
     private final Map<UUID, UUID> owners = new HashMap<>();
     private final Set<UUID> lockedTerminals = new HashSet<>();
+    private final Map<UUID, String> customNames = new HashMap<>();
 
     public static TerminalSavedData get(ServerLevel level) {
         ServerLevel overworld = level.getServer().getLevel(Level.OVERWORLD);
@@ -176,6 +177,22 @@ public final class TerminalSavedData extends SavedData {
         }
     }
 
+    /** Presentation-only custom title for one terminal connection; null when the inventory keeps its own name. */
+    public synchronized String customName(UUID connectionId) {
+        return customNames.get(connectionId);
+    }
+
+    public synchronized void putCustomName(UUID connectionId, String name) {
+        customNames.put(connectionId, name);
+        setDirty();
+    }
+
+    public synchronized void clearCustomName(UUID connectionId) {
+        if (customNames.remove(connectionId) != null) {
+            setDirty();
+        }
+    }
+
     public static TerminalSavedData load(CompoundTag tag, HolderLookup.Provider provider) {
         TerminalSavedData data = new TerminalSavedData();
         ListTag terminalList = tag.getList("Terminals", Tag.TAG_COMPOUND);
@@ -264,6 +281,16 @@ public final class TerminalSavedData extends SavedData {
                 data.notices.put(id, terminalNotices);
             }
         }
+        ListTag customNameList = tag.getList("CustomNames", Tag.TAG_COMPOUND);
+        for (int i = 0; i < customNameList.size(); i++) {
+            CompoundTag customNameTag = customNameList.getCompound(i);
+            UUID customNameConnectionId = customNameTag.hasUUID("ConnectionId")
+                    ? customNameTag.getUUID("ConnectionId") : UUID.randomUUID();
+            String customName = customNameTag.contains("Name") ? customNameTag.getString("Name") : "";
+            if (!customName.isEmpty()) {
+                data.customNames.put(customNameConnectionId, customName);
+            }
+        }
         return data;
     }
 
@@ -325,6 +352,14 @@ public final class TerminalSavedData extends SavedData {
             terminalTag.put("Notices", noticeList);
             terminalList.add(terminalTag);
         }
+        ListTag customNameList = new ListTag();
+        for (Map.Entry<UUID, String> entry : customNames.entrySet()) {
+            CompoundTag customNameTag = new CompoundTag();
+            customNameTag.putUUID("ConnectionId", entry.getKey());
+            customNameTag.putString("Name", entry.getValue() == null ? "" : entry.getValue());
+            customNameList.add(customNameTag);
+        }
+        tag.put("CustomNames", customNameList);
         tag.put("Terminals", terminalList);
         return tag;
     }

@@ -25,6 +25,7 @@ import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.level.Level;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.items.IItemHandler;
@@ -48,6 +49,7 @@ import net.interplay.simplestoragemanager.logic.TerminalOwnershipRules;
 import net.interplay.simplestoragemanager.integration.SophisticatedStorageManualClicks;
 import net.interplay.simplestoragemanager.integration.StorageDrawersManualClicks;
 import net.interplay.simplestoragemanager.network.TerminalNoticeDismissPayload;
+import net.interplay.simplestoragemanager.network.TerminalRenamePayload;
 import net.interplay.simplestoragemanager.network.TerminalStorageClickPayload;
 import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
 import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
@@ -307,10 +309,10 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 statuses.put(connection, resolution.status());
                 InventoryAdapter adapter = resolution.adapter();
                 int slotCount = adapter == null ? connection.lastSlotCount() : adapter.getSlots();
-                Component label = adapter == null
+                Component fallback = adapter == null
                         ? Component.literal(ComponentText.statusLabel(resolution.status())) : adapter.displayName();
-                sections.add(new ServerSection(connection, resolution.status(), label, slotCount,
-                        snapshotSlots(adapter), snapshotSlotLimits(adapter), List.of()));
+                sections.add(new ServerSection(connection, resolution.status(), effectiveLabel(connection, fallback),
+                        slotCount, snapshotSlots(adapter), snapshotSlotLimits(adapter), List.of()));
             }
         } else {
             List<SearchEntry> results = new ArrayList<>();
@@ -533,10 +535,11 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             if (connection.equals(current.connection())) {
                 int slotCount = resolution.adapter() == null
                         ? current.slotCount() : resolution.adapter().getSlots();
-                Component label = resolution.adapter() == null
+                Component fallback = resolution.adapter() == null
                         ? Component.literal(ComponentText.statusLabel(resolution.status()))
                         : resolution.adapter().displayName();
-                updated.set(section, new ServerSection(connection, resolution.status(), label, slotCount,
+                updated.set(section, new ServerSection(connection, resolution.status(),
+                        effectiveLabel(connection, fallback), slotCount,
                         snapshotSlots(resolution.adapter()), snapshotSlotLimits(resolution.adapter()), List.of()));
                 break;
             }
@@ -574,9 +577,10 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 }
             }
         }
-        Component label = resolution.adapter() == null
+        Component fallback = resolution.adapter() == null
                 ? Component.literal(ComponentText.statusLabel(resolution.status()))
                 : resolution.adapter().displayName();
+        Component label = effectiveLabel(connection, fallback);
         List<TerminalViewPayload.VisibleSlot> visibleSlots = sectionIndex < 0
                 ? List.of() : visibleSlotsForSection(sectionIndex);
         boolean refreshView = !search.isBlank();
@@ -837,7 +841,17 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private Component label(ServerSection section) {
-        return section.label();
+        return effectiveLabel(section.connection(), section.label());
+    }
+
+    private Component effectiveLabel(TerminalConnection connection, Component fallback) {
+        if (connection == null) return fallback;
+        ServerLevel serverLevel = entity.getServer() == null ? null : entity.getServer().getLevel(entity.level().dimension());
+        String customName = TerminalSavedData.get(serverLevel).customName(connection.connectionId());
+        if (customName != null && !customName.isBlank()) {
+            return Component.literal(customName);
+        }
+        return fallback;
     }
 
     private String coordinate(TerminalConnection connection) {
@@ -2122,6 +2136,37 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return remainder.isEmpty()
                 || ItemStack.isSameItemSameComponents(original, remainder)
                 && remainder.getCount() >= 0 && remainder.getCount() <= offeredCount;
+    }
+
+    public void handleRename(ServerPlayer player, TerminalRenamePayload payload) {
+        if (world.isClientSide || !stillValid(player)) return;
+        if (!search.isBlank()) return;
+        if (!canUseConnectedInventories(player, true)) return;
+        int targetSection = payload.section();
+        if (targetSection < 0 || targetSection >= serverSections.size()) return;
+        ServerSection section = serverSections.get(targetSection);
+        if (section.connection() == null) return;
+        TerminalSavedData.get(player.serverLevel()).putCustomName(
+                section.connection().connectionId(), payload.name());
+        refreshServerView();
+        broadcastRenameToTerminalViewers(player);
+    }
+
+    private void broadcastRenameToTerminalViewers(ServerPlayer requester) {
+        UUID id = terminalId;
+        if (id == null) return;
+        ServerLevel level = requester.serverLevel();
+        List<ServerPlayer> players = level.getServer().getPlayerList().getPlayers();
+        List<ServerPlayer> viewers = new ArrayList<>();
+        for (ServerPlayer candidate : players) {
+            if (candidate.containerMenu instanceof StorageManagerGUIMenu menu
+                    && id.equals(menu.terminalId())) {
+                viewers.add(candidate);
+            }
+        }
+        for (ServerPlayer viewer : viewers) {
+            sendView(viewer, false);
+        }
     }
 
     public void dismissNotice(ServerPlayer player, TerminalNoticeDismissPayload payload) {

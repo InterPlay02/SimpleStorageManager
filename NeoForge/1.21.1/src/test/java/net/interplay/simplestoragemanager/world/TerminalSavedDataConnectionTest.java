@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class TerminalSavedDataConnectionTest {
     private static final ResourceKey<Level> OVERWORLD =
@@ -88,5 +89,26 @@ class TerminalSavedDataConnectionTest {
         connection.put("BlockIds", new ListTag());
         connection.putInt("SlotCount", 9);
         return connection;
+    }
+
+    @Test
+    void customNamesPersistPerConnectionAndClearWhenTheConnectionIsRemoved() {
+        TerminalSavedData data = new TerminalSavedData();
+        UUID terminalId = UUID.randomUUID();
+        UUID otherConnectionId = UUID.randomUUID();
+        data.putCustomName(terminalId, "Obsidian Vault");
+        data.putCustomName(otherConnectionId, "Backup Base");
+
+        TerminalSavedData loaded = TerminalSavedData.load(data.save(new CompoundTag(), null), null);
+        assertEquals("Obsidian Vault", loaded.customName(terminalId));
+        assertEquals("Backup Base", loaded.customName(otherConnectionId));
+
+        loaded.clearCustomName(terminalId);
+        assertNull(loaded.customName(terminalId));
+        assertEquals("Backup Base", loaded.customName(otherConnectionId));
+
+        TerminalSavedData reloaded = TerminalSavedData.load(loaded.save(new CompoundTag(), null), null);
+        assertNull(reloaded.customName(terminalId));
+        assertEquals("Backup Base", reloaded.customName(otherConnectionId));
     }
 }

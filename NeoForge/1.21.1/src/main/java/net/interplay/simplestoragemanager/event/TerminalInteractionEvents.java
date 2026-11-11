@@ -89,7 +89,11 @@ public final class TerminalInteractionEvents {
             }
         }
         if (existing >= 0) {
+            TerminalConnection removed = connections.get(existing);
             connections.remove(existing);
+            if (removed != null) {
+                TerminalSavedData.get(player.serverLevel()).clearCustomName(removed.connectionId());
+            }
             data.putConnections(id, connections);
             player.sendSystemMessage(Component.translatable("message.simplestoragemanager.disconnected",
                     event.getPos().getX(), event.getPos().getY(), event.getPos().getZ()));
@@ -123,6 +127,7 @@ public final class TerminalInteractionEvents {
                     initialResolution.adapter().implementationKind());
         }
         connections.add(newConnection);
+        TerminalSavedData.get(player.serverLevel()).clearCustomName(newConnection.connectionId());
         data.putConnections(id, connections);
         player.sendSystemMessage(Component.translatable("message.simplestoragemanager.connected",
                 event.getPos().getX(), event.getPos().getY(), event.getPos().getZ()));

@@ -24,10 +24,12 @@ import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewPayloa
 import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewRequestPayload;
 import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
 import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
+import net.interplay.simplestoragemanager.network.TerminalRenamePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
 import net.interplay.simplestoragemanager.logic.TerminalScaleChoice;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
+import net.interplay.simplestoragemanager.logic.TerminalTitleLogic;
 import net.interplay.simplestoragemanager.logic.UpgradeSlotRules;
 import net.interplay.simplestoragemanager.logic.ManualInsertionRules;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
@@ -75,6 +77,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private final Player player;
     private TerminalScreenLayout.Variant variant = TerminalScreenLayout.SMALL;
     private EditBox searchBar;
+    private EditBox titleEditBox;
+    private int titleBoxHeight;
+    private int editingSection = -1;
+    private String editingBackupName = "";
+    private final Map<Integer, TitleScrollAnimation> titleScrollAnimations = new HashMap<>();
+    private int lastTitleClickSection = -1;
+    private long lastTitleClickTime;
+    private double lastTitleClickX;
+    private double lastTitleClickY;
     private TerminalViewPayload view = new TerminalViewPayload(false, 0, 0, List.of(), List.of(), List.of());
     private final Map<Long, ItemStack> remoteItems = new HashMap<>();
     private final Map<Long, Integer> remoteSlotLimits = new HashMap<>();
@@ -119,6 +130,150 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         return remoteSlotLimits.getOrDefault(slotKey, stack.getMaxStackSize());
     }
 
+    private int measureTitleWidth(String text) {
+        List<net.minecraft.util.FormattedCharSequence> lines = font.split(Component.literal(text), Integer.MAX_VALUE);
+        if (lines.isEmpty()) return 0;
+        return font.width(lines.get(0));
+    }
+
+    private double animatedTitleOffset(int sectionIndex, int maxScroll) {
+        if (maxScroll <= 0) {
+            titleScrollAnimations.remove(sectionIndex);
+            return 0.0;
+        }
+        TitleScrollAnimation animation = titleScrollAnimations.computeIfAbsent(sectionIndex,
+                ignored -> new TitleScrollAnimation());
+        if (animation.startedAtTick < 0L) {
+            animation.startedAtTick = this.menu.world.getGameTime();
+        }
+        return TerminalTitleLogic.scrollOffset(this.menu.world.getGameTime(), animation.startedAtTick,
+                TerminalTitleLogic.directionTicks(), TerminalTitleLogic.pauseTicks(), maxScroll);
+    }
+
+    private void drawClippedTitle(GuiGraphics graphics, Component label, int titleX, int titleY, double offset) {
+        int boxTop = titleY - 1;
+        graphics.enableScissor(titleX, boxTop, titleX + TerminalScreenLayout.TITLE_BOX_WIDTH,
+                boxTop + titleBoxHeight);
+        try {
+            graphics.drawString(font, label, titleX + (int) Math.round(offset), titleY, 0xFFFFFFFF, false);
+        } finally {
+            graphics.disableScissor();
+        }
+    }
+
+    private void updateTitleEditBoxRect(int sectionIndex) {
+        if (view.sections().isEmpty()) return;
+        if (sectionIndex < 0 || sectionIndex >= view.sections().size()) return;
+        TerminalScreenLayout.Rect area = variant.contentArea();
+        int cursor = area.top() + 2 - view.scrollOffset();
+        for (ClientLayoutEntry entry : layoutEntries()) {
+            if (entry.notice() != null) {
+                cursor += sectionHeight(entry.notice().slotCount());
+                continue;
+            }
+            if (entry.sectionIndex() == sectionIndex) {
+                titleEditBox.setX(leftPos + area.left() + 4);
+                titleEditBox.setY(topPos + cursor + 2);
+                titleEditBox.setWidth(TerminalScreenLayout.TITLE_BOX_WIDTH);
+                titleEditBox.setHeight(titleBoxHeight);
+                return;
+            }
+            TerminalViewPayload.Section section = entry.section();
+            int slotY = cursor + 12;
+            int bottom = slotY + Math.max(1, (section.slotCount() + 8) / 9) * SLOT_SIZE + 2;
+            cursor = bottom + 4;
+        }
+    }
+
+    private void startTitleEdit(int sectionIndex) {
+        if (view.sections().isEmpty()) return;
+        if (sectionIndex < 0 || sectionIndex >= view.sections().size()) return;
+        editingSection = sectionIndex;
+        editingBackupName = view.sections().get(sectionIndex).label().getString();
+        if (titleEditBox == null) return;
+        titleEditBox.setValue(editingBackupName);
+        titleEditBox.setCursorPosition(editingBackupName.length());
+        lastTitleClickSection = -1;
+        titleEditBox.setVisible(true);
+        this.setFocused(titleEditBox);
+    }
+
+    private void confirmTitleEdit() {
+        if (editingSection < 0) return;
+        int sectionIndex = editingSection;
+        String newName = titleEditBox == null ? editingBackupName : titleEditBox.getValue();
+        if (newName == null) newName = "";
+        editingSection = -1;
+        if (titleEditBox != null) {
+            titleEditBox.setValue("");
+            titleEditBox.setVisible(false);
+        }
+        this.setFocused(null);
+        setSectionLabel(sectionIndex, Component.literal(newName));
+        PacketDistributor.sendToServer(new TerminalRenamePayload(sectionIndex, newName));
+    }
+
+    private void cancelTitleEdit() {
+        if (editingSection < 0) return;
+        int sectionIndex = editingSection;
+        editingSection = -1;
+        if (titleEditBox != null) {
+            titleEditBox.setValue("");
+            titleEditBox.setVisible(false);
+        }
+        this.setFocused(null);
+        setSectionLabel(sectionIndex, Component.literal(editingBackupName));
+    }
+
+    private void setSectionLabel(int sectionIndex, Component label) {
+        if (view.sections().isEmpty()) return;
+        if (sectionIndex < 0 || sectionIndex >= view.sections().size()) return;
+        List<TerminalViewPayload.Section> sections = new ArrayList<>(view.sections());
+        TerminalViewPayload.Section current = sections.get(sectionIndex);
+        sections.set(sectionIndex, new TerminalViewPayload.Section(label, current.coordinate(), current.status(),
+                current.slotCount()));
+        view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(), sections,
+                view.visibleSlots(), view.notices(), view.locked(), view.originTargets(), view.operationSequence(),
+                view.playerSlots(), view.canMutateInventories());
+    }
+
+    private int titleSectionAt(double mouseX, double mouseY) {
+        TerminalScreenLayout.Rect area = variant.contentArea();
+        int cursor = area.top() + 2 - view.scrollOffset();
+        for (ClientLayoutEntry entry : layoutEntries()) {
+            if (entry.notice() != null) {
+                cursor += sectionHeight(entry.notice().slotCount());
+                continue;
+            }
+            TerminalViewPayload.Section section = entry.section();
+            int top = cursor;
+            int slotY = top + 12;
+            int bottom = slotY + Math.max(1, (section.slotCount() + 8) / 9) * SLOT_SIZE + 2;
+            int titleX = leftPos + area.left() + 4;
+            int titleY = topPos + top + 2;
+            if (mouseX >= titleX && mouseX < titleX + TerminalScreenLayout.TITLE_BOX_WIDTH
+                    && mouseY >= titleY && mouseY < titleY + titleBoxHeight) {
+                return entry.sectionIndex();
+            }
+            cursor = bottom + 4;
+        }
+        return -1;
+    }
+
+    private void handleTitleClick(int sectionIndex, double mouseX, double mouseY, int button) {
+        if (button != 0) return;
+        long now = System.currentTimeMillis();
+        boolean doubleClick = sectionIndex == lastTitleClickSection
+                && now - lastTitleClickTime < 500L
+                && Math.abs(mouseX - lastTitleClickX) < 3.0
+                && Math.abs(mouseY - lastTitleClickY) < 3.0;
+        lastTitleClickSection = sectionIndex;
+        lastTitleClickTime = now;
+        lastTitleClickX = mouseX;
+        lastTitleClickY = mouseY;
+        if (doubleClick) startTitleEdit(sectionIndex);
+    }
+
     @Override
     protected void init() {
         int configuredScale = Minecraft.getInstance().options.guiScale().get();
@@ -137,6 +292,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         searchBar.setMaxLength(256);
         searchBar.setResponder(ignored -> requestView(0));
         addRenderableWidget(searchBar);
+        titleBoxHeight = font.lineHeight + 2;
+        titleEditBox = new EditBox(font, 0, 0, TerminalScreenLayout.TITLE_BOX_WIDTH, titleBoxHeight, Component.empty());
+        titleEditBox.setBordered(false);
+        titleEditBox.setTextColor(0xFFFFFF);
+        titleEditBox.setTextColorUneditable(0xFFFFFF);
+        titleEditBox.setMaxLength(256);
+        titleEditBox.setResponder(ignored -> { });
+        titleEditBox.setVisible(false);
+        addRenderableWidget(titleEditBox);
         requestView(0);
     }
 
@@ -294,8 +458,17 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             boolean unavailable = section.connectionStatus() != ConnectionStatus.AVAILABLE;
             drawDottedFrame(graphics, area.left(), top, area.right(), bottom,
                     unavailable ? 0xFFFF9B45 : 0xFFD0D0D0);
-            graphics.drawString(font, section.label(), leftPos + area.left() + 4, topPos + top + 2,
-                    0xFFFFFFFF, false);
+            if (editingSection == index) {
+                updateTitleEditBoxRect(index);
+            } else {
+                String titleText = section.label().getString();
+                int textWidth = measureTitleWidth(titleText);
+                int maxScroll = TerminalTitleLogic.scrollRange(textWidth, TerminalScreenLayout.TITLE_BOX_WIDTH);
+                double offset = animatedTitleOffset(index, maxScroll);
+                int titleX = leftPos + area.left() + 4;
+                int titleY = topPos + top + 2;
+                drawClippedTitle(graphics, section.label(), titleX, titleY, offset);
+            }
             for (int slot = 0; slot < section.slotCount(); slot++) {
                 int x = area.left() + (slot % 9) * SLOT_SIZE;
                 int y = slotY + (slot / 9) * SLOT_SIZE;
@@ -480,6 +653,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         ItemStack carried = menu.getCarried();
         if (visualRemotePreviewCarried != null) menu.setCarried(visualRemotePreviewCarried.copy());
+        if (editingSection >= 0 && titleEditBox != null) {
+            updateTitleEditBoxRect(editingSection);
+        }
         super.render(graphics, mouseX, mouseY, partialTick);
         if (visualRemotePreviewCarried != null) menu.setCarried(carried);
         if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
@@ -529,6 +705,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             }
             return super.mouseClicked(mouseX, mouseY, button);
         }
+        if (editingSection >= 0 && titleEditBox != null && titleEditBox.isFocused()) {
+            boolean insideBox = mouseX >= titleEditBox.getX() && mouseX < titleEditBox.getX() + titleEditBox.getWidth()
+                    && mouseY >= titleEditBox.getY() && mouseY < titleEditBox.getY() + titleEditBox.getHeight();
+            if (insideBox) {
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            cancelTitleEdit();
+            return true;
+        }
         if (pendingOperationSequence > 0 && button == 0 && hasShiftDown()) return true;
         if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
             if (button == 0) PacketDistributor.sendToServer(new TerminalLockTogglePayload());
@@ -536,6 +721,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
             PacketDistributor.sendToServer(new TerminalClearCraftingPayload());
+            return true;
+        }
+        int clickedTitleSection = titleSectionAt(mouseX, mouseY);
+        if (clickedTitleSection >= 0) {
+            handleTitleClick(clickedTitleSection, mouseX, mouseY, button);
             return true;
         }
         if (clickNotice(mouseX, mouseY)) return true;
@@ -597,6 +787,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                     player);
             return true;
         }
+        if (editingSection >= 0) return true;
         if (isInside(variant.scrollTrack(), mouseX, mouseY)) {
             draggingScroller = view.maxScroll() > 0;
             updateScroll(mouseY);
@@ -1277,6 +1468,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     }
 
     private void updateScroll(double mouseY) {
+        if (editingSection >= 0) return;
         int travel = variant.scrollTrack().height() - 15;
         if (travel <= 0 || view.maxScroll() <= 0) return;
         int next = (int) (((mouseY - topPos - variant.scrollTrack().top() - 7.5D) / travel) * view.maxScroll());
@@ -1286,6 +1478,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (editingSection >= 0) return true;
         if (isInside(variant.contentArea(), mouseX, mouseY) || isInside(variant.scrollTrack(), mouseX, mouseY)) {
             requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 27);
             return true;
@@ -1299,13 +1492,33 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 && minecraft.options.keyInventory.matches(keyCode, scanCode)) {
             return true;
         }
+        if (editingSection >= 0 && titleEditBox != null && titleEditBox.isFocused()) {
+            if (keyCode == InputConstants.KEY_RETURN) {
+                confirmTitleEdit();
+                return true;
+            }
+            if (keyCode == InputConstants.KEY_ESCAPE) {
+                cancelTitleEdit();
+                return true;
+            }
+            return titleEditBox.keyPressed(keyCode, scanCode, modifiers);
+        }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        if (editingSection >= 0 && titleEditBox != null && titleEditBox.isFocused()) {
+            return titleEditBox.charTyped(codePoint, modifiers);
+        }
+        return super.charTyped(codePoint, modifiers);
     }
 
     @Override
     public void resize(Minecraft minecraft, int width, int height) {
         String value = searchBar == null ? "" : searchBar.getValue();
         super.resize(minecraft, width, height);
+        if (editingSection >= 0) cancelTitleEdit();
         if (searchBar != null) searchBar.setValue(value);
     }
 
@@ -1349,6 +1562,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private int sectionHeight(int slotCount) {
         int rows = Math.max(1, (slotCount + 8) / 9);
         return 12 + rows * SLOT_SIZE + 2 + 4;
+    }
+
+    private static final class TitleScrollAnimation {
+        private long startedAtTick = -1L;
     }
 
     private record RemoteHit(int section, int slot, ItemStack stack) { }
