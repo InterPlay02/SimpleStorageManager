@@ -10,6 +10,8 @@ import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.Slot;
@@ -72,7 +74,12 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             "simplestoragemanager", "textures/screens/report_button.png");
     private static final ResourceLocation REPORT_HIGHLIGHTED_TEXTURE = ResourceLocation.fromNamespaceAndPath(
             "simplestoragemanager", "textures/screens/report_button_highlighted.png");
+    private static final ResourceLocation ORGANIZER_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/organizer.png");
+    private static final ResourceLocation FILTER_TEXTURE = ResourceLocation.fromNamespaceAndPath(
+            "simplestoragemanager", "textures/screens/filter.png");
     private static final int SLOT_SIZE = TerminalScreenLayout.SLOT_SIZE;
+    private static final int SECTION_BUTTON_SIZE = 10;
 
     private final Player player;
     private TerminalScreenLayout.Variant variant = TerminalScreenLayout.SMALL;
@@ -94,6 +101,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private RemoteHit hoveredRemote;
     private boolean hoveredUnavailableIcon;
     private boolean hoveredNoticeDismiss;
+    private int hoveredOrganizeSection = -1;
+    private int hoveredFilterSection = -1;
     private boolean draggingScroller;
     private final List<TerminalStorageClickPayload.SlotTarget> remoteDragTargets = new ArrayList<>();
     private final Map<Long, ItemStack> remotePreviewItems = new HashMap<>();
@@ -239,6 +248,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     private int titleSectionAt(double mouseX, double mouseY) {
         TerminalScreenLayout.Rect area = variant.contentArea();
+        // Somente cliques dentro da área de conteúdo podem atingir caixas de título.
+        // Impede que títulos escondidos fora do viewport bloqueiem cliques no resto da GUI
+        // (ex.: inventário principal do player logo abaixo).
+        if (!isInside(area, mouseX, mouseY)) return -1;
         int cursor = area.top() + 2 - view.scrollOffset();
         for (ClientLayoutEntry entry : layoutEntries()) {
             if (entry.notice() != null) {
@@ -251,6 +264,13 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             int bottom = slotY + Math.max(1, (section.slotCount() + 8) / 9) * SLOT_SIZE + 2;
             int titleX = leftPos + area.left() + 4;
             int titleY = topPos + top + 2;
+            // Ignore seções cujo título está completamente fora da área visível
+            // (acima ou abaixo do viewport por causa do rolagem).
+            if (titleY + titleBoxHeight <= topPos + area.top()
+                    || titleY >= topPos + area.bottom()) {
+                cursor = bottom + 4;
+                continue;
+            }
             if (mouseX >= titleX && mouseX < titleX + TerminalScreenLayout.TITLE_BOX_WIDTH
                     && mouseY >= titleY && mouseY < titleY + titleBoxHeight) {
                 return entry.sectionIndex();
@@ -272,6 +292,57 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         lastTitleClickX = mouseX;
         lastTitleClickY = mouseY;
         if (doubleClick) startTitleEdit(sectionIndex);
+    }
+
+    private int[] sectionButtonRects(int top) {
+        TerminalScreenLayout.Rect main = variant.mainArea();
+        int buttonY = topPos + top + 2;
+        int organizeButtonRight = leftPos + main.right() - 2;
+        int organizeButtonLeft = organizeButtonRight - SECTION_BUTTON_SIZE;
+        int filterButtonRight = organizeButtonLeft - 2;
+        int filterButtonLeft = filterButtonRight - SECTION_BUTTON_SIZE;
+        return new int[]{filterButtonLeft, filterButtonRight, organizeButtonLeft, organizeButtonRight, buttonY};
+    }
+
+    private int sectionButtonAt(double mouseX, double mouseY) {
+        TerminalScreenLayout.Rect area = variant.contentArea();
+        if (!isInside(area, mouseX, mouseY)) return -1;
+        int cursor = area.top() + 2 - view.scrollOffset();
+        for (ClientLayoutEntry entry : layoutEntries()) {
+            if (entry.notice() != null) {
+                cursor += sectionHeight(entry.notice().slotCount());
+                continue;
+            }
+            int index = entry.sectionIndex();
+            TerminalViewPayload.Section section = entry.section();
+            int rows = Math.max(1, (section.slotCount() + 8) / 9);
+            int top = cursor;
+            int slotY = top + 12;
+            int bottom = slotY + rows * SLOT_SIZE + 2;
+            // Os botões só existem quando o inventário está disponível.
+            if (section.connectionStatus() == ConnectionStatus.AVAILABLE) {
+                int[] rects = sectionButtonRects(top);
+                int filterButtonLeft = rects[0], filterButtonRight = rects[1];
+                int organizeButtonLeft = rects[2], organizeButtonRight = rects[3], buttonY = rects[4];
+
+                boolean organizeHovered = mouseX >= organizeButtonLeft && mouseX < organizeButtonRight
+                        && mouseY >= buttonY && mouseY < buttonY + SECTION_BUTTON_SIZE;
+                boolean filterHovered = mouseX >= filterButtonLeft && mouseX < filterButtonRight
+                        && mouseY >= buttonY && mouseY < buttonY + SECTION_BUTTON_SIZE;
+
+                if (organizeHovered || filterHovered) {
+                    return index;
+                }
+            }
+            cursor = bottom + 4;
+        }
+        return -1;
+    }
+
+    private void handleSectionButtonClick(int button) {
+        if (button != 0) return;
+        minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+        // No additional functionality - just play the click sound
     }
 
     @Override
@@ -441,6 +512,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         hoveredRemote = null;
         hoveredUnavailableIcon = false;
         hoveredNoticeDismiss = false;
+        hoveredOrganizeSection = -1;
+        hoveredFilterSection = -1;
         for (ClientLayoutEntry entry : layoutEntries()) {
             if (entry.notice() != null) {
                 int bottom = cursor + sectionHeight(entry.notice().slotCount()) - 4;
@@ -469,6 +542,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 int titleY = topPos + top + 2;
                 drawClippedTitle(graphics, section.label(), titleX, titleY, offset);
             }
+
             for (int slot = 0; slot < section.slotCount(); slot++) {
                 int x = area.left() + (slot % 9) * SLOT_SIZE;
                 int y = slotY + (slot / 9) * SLOT_SIZE;
@@ -489,6 +563,29 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             }
             if (unavailable) {
                 drawUnavailable(graphics, section, area.left(), top, area.right(), bottom, mouseX, mouseY);
+            }
+
+            if (!unavailable) {
+                // Render section buttons (Organize and Filter) on the same height as the title,
+                // at the top-right of the section, 2px from the main area's right edge.
+                // Hidden entirely (and not clickable) when the inventory is unavailable.
+                int[] rects = sectionButtonRects(top);
+                int filterButtonLeft = rects[0], filterButtonRight = rects[1];
+                int organizeButtonLeft = rects[2], organizeButtonRight = rects[3], buttonY = rects[4];
+
+                boolean organizeHovered = mouseX >= organizeButtonLeft && mouseX < organizeButtonRight
+                        && mouseY >= buttonY && mouseY < buttonY + SECTION_BUTTON_SIZE;
+                boolean filterHovered = mouseX >= filterButtonLeft && mouseX < filterButtonRight
+                        && mouseY >= buttonY && mouseY < buttonY + SECTION_BUTTON_SIZE;
+
+                if (organizeHovered) hoveredOrganizeSection = index;
+                if (filterHovered) hoveredFilterSection = index;
+
+                // Scale the whole 18x18 source texture to 10x10 (same pattern as the lock/alert buttons).
+                graphics.blit(ORGANIZER_TEXTURE, organizeButtonLeft, buttonY,
+                        SECTION_BUTTON_SIZE, SECTION_BUTTON_SIZE, 0, 0, 18, 18, 18, 18);
+                graphics.blit(FILTER_TEXTURE, filterButtonLeft, buttonY,
+                        SECTION_BUTTON_SIZE, SECTION_BUTTON_SIZE, 0, 0, 18, 18, 18, 18);
             }
             cursor = bottom + 4;
         }
@@ -675,6 +772,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                         .withStyle(ChatFormatting.GRAY), 180));
             }
             graphics.renderTooltip(font, lines, mouseX, mouseY);
+        } else if (hoveredOrganizeSection >= 0) {
+            graphics.renderTooltip(font,
+                    Component.translatable("gui.simplestoragemanager.storage_manager_gui.organize_inventory"),
+                    mouseX, mouseY);
+        } else if (hoveredFilterSection >= 0) {
+            graphics.renderTooltip(font,
+                    Component.translatable("gui.simplestoragemanager.storage_manager_gui.open_inventory_filter"),
+                    mouseX, mouseY);
         } else if (hoveredNoticeDismiss) {
             graphics.renderTooltip(font, Component.translatable("screen.simplestoragemanager.dismiss_notice"),
                     mouseX, mouseY);
@@ -721,6 +826,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
             PacketDistributor.sendToServer(new TerminalClearCraftingPayload());
+            return true;
+        }
+        int sectionButtonSection = sectionButtonAt(mouseX, mouseY);
+        if (sectionButtonSection >= 0) {
+            handleSectionButtonClick(button);
             return true;
         }
         int clickedTitleSection = titleSectionAt(mouseX, mouseY);

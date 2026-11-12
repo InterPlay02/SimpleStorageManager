@@ -47,7 +47,9 @@ public final class TerminalTitleLogic {
 
         if (position < forwardEnd) {
             double progress = (double) position / (double) direction;
-            return -easeInOut(progress) * maxScroll;
+            double eased = easeInOut(progress);
+            double offset = eased * maxScroll;
+            return offset == 0.0 ? 0.0 : -offset;
         } else if (position < holdEnd) {
             return -maxScroll;
         } else if (position < backEnd) {

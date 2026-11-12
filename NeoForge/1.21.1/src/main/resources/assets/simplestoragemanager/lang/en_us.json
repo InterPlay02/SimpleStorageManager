@@ -37,5 +37,7 @@
   "screen.simplestoragemanager.dimension_selector.save": "Save",
   "screen.simplestoragemanager.dimension_selector.selection_hint": "Select up to five dimensions",
   "screen.simplestoragemanager.dimension_selector.limit": "You can only select up to five dimensions.",
-  "screen.simplestoragemanager.dimension_selector.save_failed": "Could not save the selected dimensions."
+  "screen.simplestoragemanager.dimension_selector.save_failed": "Could not save the selected dimensions.",
+  "gui.simplestoragemanager.storage_manager_gui.organize_inventory": "Sort Inventory",
+  "gui.simplestoragemanager.storage_manager_gui.open_inventory_filter": "Open Inventory Filter"
 }
