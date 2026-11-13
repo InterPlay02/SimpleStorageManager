@@ -243,7 +243,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 current.slotCount()));
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(), sections,
                 view.visibleSlots(), view.notices(), view.locked(), view.originTargets(), view.operationSequence(),
-                view.playerSlots(), view.canMutateInventories());
+                view.playerSlots(), view.canMutateInventories(), view.advanced());
     }
 
     private int titleSectionAt(double mouseX, double mouseY) {
@@ -307,6 +307,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private int sectionButtonAt(double mouseX, double mouseY) {
         TerminalScreenLayout.Rect area = variant.contentArea();
         if (!isInside(area, mouseX, mouseY)) return -1;
+        if (!view.advanced()) return -1;
         int cursor = area.top() + 2 - view.scrollOffset();
         for (ClientLayoutEntry entry : layoutEntries()) {
             if (entry.notice() != null) {
@@ -441,7 +442,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         visibleSlots.addAll(payload.visibleSlots());
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(),
                 sections, visibleSlots, view.notices(), view.locked(), view.originTargets(),
-                view.operationSequence(), view.playerSlots(), view.canMutateInventories());
+                view.operationSequence(), view.playerSlots(), view.canMutateInventories(), view.advanced());
         remoteItems.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteSlotLimits.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteConnectionIds.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
@@ -565,10 +566,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 drawUnavailable(graphics, section, area.left(), top, area.right(), bottom, mouseX, mouseY);
             }
 
-            if (!unavailable) {
+            if (!unavailable && view.advanced()) {
                 // Render section buttons (Organize and Filter) on the same height as the title,
                 // at the top-right of the section, 2px from the main area's right edge.
-                // Hidden entirely (and not clickable) when the inventory is unavailable.
+                // Hidden entirely (and not clickable) when the inventory is unavailable
+                // or the terminal is in basic mode.
                 int[] rects = sectionButtonRects(top);
                 int filterButtonLeft = rects[0], filterButtonRight = rects[1];
                 int organizeButtonLeft = rects[2], organizeButtonRight = rects[3], buttonY = rects[4];
@@ -772,11 +774,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                         .withStyle(ChatFormatting.GRAY), 180));
             }
             graphics.renderTooltip(font, lines, mouseX, mouseY);
-        } else if (hoveredOrganizeSection >= 0) {
+        } else if (hoveredOrganizeSection >= 0 && view.advanced()) {
             graphics.renderTooltip(font,
                     Component.translatable("gui.simplestoragemanager.storage_manager_gui.organize_inventory"),
                     mouseX, mouseY);
-        } else if (hoveredFilterSection >= 0) {
+        } else if (hoveredFilterSection >= 0 && view.advanced()) {
             graphics.renderTooltip(font,
                     Component.translatable("gui.simplestoragemanager.storage_manager_gui.open_inventory_filter"),
                     mouseX, mouseY);
@@ -821,10 +823,16 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         if (pendingOperationSequence > 0 && button == 0 && hasShiftDown()) return true;
         if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
-            if (button == 0) PacketDistributor.sendToServer(new TerminalLockTogglePayload());
+            if (button == 0) {
+                minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+                PacketDistributor.sendToServer(new TerminalLockTogglePayload());
+            }
             return true;
         }
         if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
+            if (button == 0) {
+                minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+            }
             PacketDistributor.sendToServer(new TerminalClearCraftingPayload());
             return true;
         }

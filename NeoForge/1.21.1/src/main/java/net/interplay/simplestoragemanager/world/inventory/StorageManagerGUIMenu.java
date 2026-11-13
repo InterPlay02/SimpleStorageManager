@@ -280,7 +280,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 .toList();
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(),
                 sections, visibleSlots, view.notices(), view.locked(), view.originTargets(),
-                view.operationSequence(), view.playerSlots(), view.canMutateInventories());
+                view.operationSequence(), view.playerSlots(), view.canMutateInventories(),
+                view.advanced());
     }
 
     public void handleViewRequest(TerminalViewRequestPayload request) {
@@ -766,9 +767,10 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 ? slots.stream().map(slot -> new TerminalViewPayload.PlayerSlot(slot.index, slot.getItem()))
                 .toList()
                 : List.of();
+        boolean advanced = Boolean.TRUE.equals(terminalStack().get(TerminalDataComponents.TERMINAL_ADVANCED.get()));
         player.connection.send(new TerminalViewPayload(big, scrollOffset, maxScroll, sections, visible,
                 noticePayload, locked, originTargetsForView(player), lastOperationSequence, playerSlots,
-                canUseConnectedInventories(player, false)));
+                canUseConnectedInventories(player, false), advanced));
     }
 
     private List<TerminalViewPayload.OriginTarget> originTargetsForView(ServerPlayer player) {

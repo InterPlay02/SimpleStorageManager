@@ -28,6 +28,12 @@ public final class TerminalDataComponents {
                     .persistent(UUID_CODEC)
                     .networkSynchronized(UUID_STREAM_CODEC));
 
+    /** Whether the terminal has been upgraded to Advanced mode. Defaults to false. */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Boolean>> TERMINAL_ADVANCED =
+            REGISTRY.registerComponentType("advanced", builder -> builder
+                    .persistent(Codec.BOOL)
+                    .networkSynchronized(ByteBufCodecs.BOOL));
+
     public static final DeferredHolder<DataComponentType<?>, DataComponentType<java.util.List<String>>> DIMENSION_SELECTION =
             REGISTRY.registerComponentType("dimension_selection", builder -> builder
                     .persistent(Codec.STRING.listOf())

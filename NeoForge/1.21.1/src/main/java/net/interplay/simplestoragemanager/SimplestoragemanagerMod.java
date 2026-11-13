@@ -30,6 +30,7 @@ import net.interplay.simplestoragemanager.init.SimplestoragemanagerModTabs;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModMenus;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModItems;
 import net.interplay.simplestoragemanager.data.TerminalDataComponents;
+import net.interplay.simplestoragemanager.init.SimplestoragemanagerModRecipes;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -57,6 +58,7 @@ public class SimplestoragemanagerMod {
 		NeoForge.EVENT_BUS.register(this);
 		modEventBus.addListener(this::registerNetworking);
 		SimplestoragemanagerModItems.REGISTRY.register(modEventBus);
+		SimplestoragemanagerModRecipes.REGISTRY.register(modEventBus);
 		TerminalDataComponents.REGISTRY.register(modEventBus);
 		SimplestoragemanagerModTabs.REGISTRY.register(modEventBus);
 		SimplestoragemanagerModMenus.REGISTRY.register(modEventBus);

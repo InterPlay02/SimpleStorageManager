@@ -1,0 +1,39 @@
+{
+  "type": "simplestoragemanager:storage_manager_upgrade",
+  "group": "storage_manager_upgrade",
+  "category": "equipment",
+  "pattern": [
+    "ABC",
+    "DEF",
+    "GHI"
+  ],
+  "key": {
+    "A": {
+      "item": "minecraft:name_tag"
+    },
+    "B": {
+      "item": "minecraft:crafter"
+    },
+    "C": {
+      "item": "minecraft:paper"
+    },
+    "D": {
+      "item": "minecraft:writable_book"
+    },
+    "E": {
+      "item": "simplestoragemanager:storage_manager"
+    },
+    "F": {
+      "item": "minecraft:book"
+    },
+    "G": {
+      "item": "minecraft:comparator"
+    },
+    "H": {
+      "item": "minecraft:observer"
+    },
+    "I": {
+      "item": "minecraft:hopper"
+    }
+  }
+}

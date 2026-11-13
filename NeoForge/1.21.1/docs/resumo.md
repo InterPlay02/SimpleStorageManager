@@ -171,6 +171,14 @@ Esta seção registra o funcionamento atual de cada clique/arrasto contra invent
 - Sem shift: clique esquerdo extrai limite do item (`extractionCount`); clique direito extrai metade (`rightClickAmount`).
 - Com shift: extração via rota shift.
 
+## Edição dos títulos das seções
+
+- A edição de título de seção é local no cliente: duplo clique no título dentro da área de conteúdo (`handleTitleClick` → `startTitleEdit`), com backup em `editingBackupName` e `EditBox` posicionado por `updateTitleEditBoxRect`.
+- Enquanto edita, o desenho usa o `EditBox` e a rolagem é ignorada; Enter confirma (`confirmTitleEdit`) e Esc cancela (`cancelTitleEdit`), repassando teclas ao `EditBox`.
+- Ao confirmar, o rótulo local em `view.sections()` é atualizado (`setSectionLabel`) e o cliente envia `TerminalRenamePayload(sectionIndex, newName)`.
+- No servidor, `handleRename` valida permissão/índice/conexão, persiste via `TerminalSavedData.putCustomName`, atualiza o view e reenvia aos viewers do mesmo terminal (`broadcastRenameToTerminalViewers`).
+- O nome customizado prevalece sobre o fallback do bloco no rótulo exibido (`effectiveLabel`) e é persistido em `TerminalSavedData.customNames` (NBT `CustomNames`); nomes vazios não são guardados.
+
 ## Comportamentos esperados para cada click que interage com a área principal da GUI do terminal
 
 1. Clique simples esquerdo (pegar, depositar, trocar).
