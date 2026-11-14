@@ -2,12 +2,16 @@ package net.interplay.simplestoragemanager.client.gui;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.platform.InputConstants;
+import org.joml.Vector2i;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
 import net.minecraft.ChatFormatting;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvents;
@@ -80,6 +84,16 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             "simplestoragemanager", "textures/screens/filter.png");
     private static final int SLOT_SIZE = TerminalScreenLayout.SLOT_SIZE;
     private static final int SECTION_BUTTON_SIZE = 10;
+    private static final int SECTION_BUTTON_NONE = 0;
+    private static final int SECTION_BUTTON_ORGANIZE = 1;
+    private static final int SECTION_BUTTON_FILTER = 2;
+    private static final int SECTION_MENU_ORGANIZE_OPTION_COUNT = 4;
+    private static final int FILTER_MENU_ITEM_COUNT = 2;
+    private static final int SECTION_MENU_OFFSET_X = 10;
+    private static final int SECTION_MENU_OFFSET_Y = 10;
+    private static final String MENU_CHECK_MARK = "\u2713";
+    private static final int MENU_TITLE_COLOR = 0xFFFFFFFF;
+    private static final int MENU_OPTION_COLOR = 0xFFfb8f13;
 
     private final Player player;
     private TerminalScreenLayout.Variant variant = TerminalScreenLayout.SMALL;
@@ -103,6 +117,20 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private boolean hoveredNoticeDismiss;
     private int hoveredOrganizeSection = -1;
     private int hoveredFilterSection = -1;
+    private boolean sectionMenuOpen;
+    private int sectionMenuSourceButton = SECTION_BUTTON_NONE;
+    private int sectionMenuSelectedOrganize = -1;
+    private int sectionMenuSelectedFilter = -1;
+    private int sectionMenuX;
+    private int sectionMenuY;
+    private final ClientTooltipPositioner sectionMenuPositioner = new ClientTooltipPositioner() {
+        @Override
+        public Vector2i positionTooltip(int guiLeft, int guiTop, int mouseX, int mouseY, int width, int height) {
+            int x = Math.max(4, Math.min(sectionMenuX, guiLeft - width - 4));
+            int y = Math.max(4, Math.min(sectionMenuY, guiTop - height - 4));
+            return new Vector2i(x, y);
+        }
+    };
     private boolean draggingScroller;
     private final List<TerminalStorageClickPayload.SlotTarget> remoteDragTargets = new ArrayList<>();
     private final Map<Long, ItemStack> remotePreviewItems = new HashMap<>();
@@ -306,15 +334,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     private int sectionButtonAt(double mouseX, double mouseY) {
         TerminalScreenLayout.Rect area = variant.contentArea();
-        if (!isInside(area, mouseX, mouseY)) return -1;
-        if (!view.advanced()) return -1;
+        if (!isInside(area, mouseX, mouseY)) return SECTION_BUTTON_NONE;
+        if (!view.advanced()) return SECTION_BUTTON_NONE;
         int cursor = area.top() + 2 - view.scrollOffset();
         for (ClientLayoutEntry entry : layoutEntries()) {
             if (entry.notice() != null) {
                 cursor += sectionHeight(entry.notice().slotCount());
                 continue;
             }
-            int index = entry.sectionIndex();
             TerminalViewPayload.Section section = entry.section();
             int rows = Math.max(1, (section.slotCount() + 8) / 9);
             int top = cursor;
@@ -331,19 +358,154 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 boolean filterHovered = mouseX >= filterButtonLeft && mouseX < filterButtonRight
                         && mouseY >= buttonY && mouseY < buttonY + SECTION_BUTTON_SIZE;
 
-                if (organizeHovered || filterHovered) {
-                    return index;
-                }
+                if (organizeHovered) return SECTION_BUTTON_ORGANIZE;
+                if (filterHovered) return SECTION_BUTTON_FILTER;
             }
             cursor = bottom + 4;
         }
-        return -1;
+        return SECTION_BUTTON_NONE;
     }
 
     private void handleSectionButtonClick(int button) {
         if (button != 0) return;
         minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
         // No additional functionality - just play the click sound
+    }
+
+    private void openSectionMenu(int sourceButton, double mouseX, double mouseY) {
+        sectionMenuOpen = true;
+        sectionMenuSourceButton = sourceButton;
+        sectionMenuX = (int) Math.round(mouseX) + SECTION_MENU_OFFSET_X;
+        sectionMenuY = (int) Math.round(mouseY) + SECTION_MENU_OFFSET_Y;
+    }
+
+    private void closeSectionMenu() {
+        sectionMenuOpen = false;
+    }
+
+    private void selectSectionMenuOption(int sourceButton, int option) {
+        if (sourceButton == SECTION_BUTTON_ORGANIZE) {
+            sectionMenuSelectedOrganize = option;
+        } else {
+            sectionMenuSelectedFilter = option;
+        }
+        sectionMenuOpen = false;
+        minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+    }
+
+    private int sectionMenuSelectedFor(int sourceButton) {
+        if (sourceButton == SECTION_BUTTON_ORGANIZE) {
+            // Primeira opção é o padrão quando nada foi selecionado ainda.
+            return sectionMenuSelectedOrganize < 0 ? 0 : sectionMenuSelectedOrganize;
+        }
+        return sectionMenuSelectedFilter < 0 ? 0 : sectionMenuSelectedFilter;
+    }
+
+    private int sectionMenuLineCount(int sourceButton) {
+        if (sourceButton == SECTION_BUTTON_ORGANIZE) {
+            // A primeira linha é o título ("Organizar por:"), não selecionável; as demais são as opções.
+            return SECTION_MENU_ORGANIZE_OPTION_COUNT + 1;
+        }
+        // A primeira linha é o título ("Tipo de Filtro:"), não selecionável; as demais são as opções.
+        return FILTER_MENU_ITEM_COUNT + 1;
+    }
+
+    private boolean sectionMenuLineSelectable(int sourceButton, int line) {
+        // A primeira linha (título) de qualquer menu não é selecionável; as demais são opções.
+        return line > 0;
+    }
+
+    private MutableComponent sectionMenuLine(int sourceButton, int line) {
+        if (sourceButton == SECTION_BUTTON_ORGANIZE && line == 0) {
+            return Component.translatable("gui.simplestoragemanager.storage_manager_gui.organize_by")
+                    .withStyle(Style.EMPTY.withColor(MENU_TITLE_COLOR));
+        }
+        if (sourceButton == SECTION_BUTTON_FILTER && line == 0) {
+            return Component.translatable("gui.simplestoragemanager.storage_manager_gui.filter_type")
+                    .withStyle(Style.EMPTY.withColor(MENU_TITLE_COLOR));
+        }
+        int option = line - 1;
+        MutableComponent text = Component.translatable(sectionMenuTranslationKey(sourceButton, option));
+        int spaceWidth = font.width(" ");
+        int checkmarkWidth = font.width(Component.literal(MENU_CHECK_MARK));
+        int reservedWidth = checkmarkWidth + spaceWidth;
+        int selected = sectionMenuSelectedFor(sourceButton);
+        String prefix = option == selected
+                ? MENU_CHECK_MARK + " "
+                : " ".repeat(Math.max(1, (int) Math.ceil((double) reservedWidth / spaceWidth)));
+        MutableComponent lineComponent = Component.literal(prefix).append(text);
+        return lineComponent.withStyle(Style.EMPTY.withColor(MENU_OPTION_COLOR));
+    }
+
+    private String sectionMenuTranslationKey(int sourceButton, int option) {
+        if (sourceButton == SECTION_BUTTON_ORGANIZE) {
+            return switch (option) {
+                case 0 -> "gui.simplestoragemanager.storage_manager_gui.organize_by_name";
+                case 1 -> "gui.simplestoragemanager.storage_manager_gui.organize_by_quantity";
+                case 2 -> "gui.simplestoragemanager.storage_manager_gui.organize_by_item_type";
+                case 3 -> "gui.simplestoragemanager.storage_manager_gui.organize_by_mod";
+                default -> "";
+            };
+        }
+        return switch (option) {
+            case 0 -> "gui.simplestoragemanager.storage_manager_gui.filter_allow";
+            case 1 -> "gui.simplestoragemanager.storage_manager_gui.filter_deny";
+            default -> "";
+        };
+    }
+
+    private int sectionMenuOptionAt(double mouseX, double mouseY, int sourceButton) {
+        List<MutableComponent> lines = new ArrayList<>();
+        int widest = 0;
+        for (int line = 0; line < sectionMenuLineCount(sourceButton); line++) {
+            if (!sectionMenuLineSelectable(sourceButton, line)) continue;
+            MutableComponent menuLine = sectionMenuLine(sourceButton, line);
+            lines.add(menuLine);
+            widest = Math.max(widest, font.width(menuLine));
+        }
+        int menuWidth = Math.max(1, widest + 4);
+        int lineHeight = font.lineHeight;
+        for (int line = 0; line < sectionMenuLineCount(sourceButton); line++) {
+            if (!sectionMenuLineSelectable(sourceButton, line)) continue;
+            MutableComponent menuLine = sectionMenuLine(sourceButton, line);
+            List<net.minecraft.util.FormattedCharSequence> split = font.split(menuLine, menuWidth);
+            if (!split.isEmpty()) {
+                int left = sectionMenuX;
+                int top = sectionMenuY + line * lineHeight;
+                int right = left + font.width(split.get(0));
+                int bottom = top + lineHeight;
+                if (mouseX >= left && mouseX < right && mouseY >= top && mouseY < bottom) {
+                    return line - 1;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private void renderSectionMenu(GuiGraphics graphics, int mouseX, int mouseY, int sourceButton) {
+        List<MutableComponent> lines = new ArrayList<>();
+        int widest = 0;
+        for (int line = 0; line < sectionMenuLineCount(sourceButton); line++) {
+            MutableComponent menuLine = sectionMenuLine(sourceButton, line);
+            lines.add(menuLine);
+            widest = Math.max(widest, font.width(menuLine));
+        }
+        List<net.minecraft.util.FormattedCharSequence> rendered = new ArrayList<>();
+        int menuWidth = Math.max(1, widest + 4);
+        for (MutableComponent line : lines) {
+            rendered.addAll(font.split(line, menuWidth));
+        }
+        graphics.renderTooltip(font, rendered, sectionMenuPositioner, mouseX, mouseY);
+    }
+
+    private boolean handleSectionMenuClick(double mouseX, double mouseY, int button, int sourceButton) {
+        int option = sectionMenuOptionAt(mouseX, mouseY, sourceButton);
+        if (option >= 0 && (button == 0 || button == 1)) {
+            selectSectionMenuOption(sourceButton, option);
+            return true;
+        }
+        closeSectionMenu();
+        return true;
     }
 
     @Override
@@ -757,7 +919,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         super.render(graphics, mouseX, mouseY, partialTick);
         if (visualRemotePreviewCarried != null) menu.setCarried(carried);
-        if (isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
+        if (sectionMenuOpen) {
+            renderSectionMenu(graphics, mouseX, mouseY, sectionMenuSourceButton);
+        }
+        if (!sectionMenuOpen && isPointInside(variant.cross(), TerminalScreenLayout.BUTTON_SIZE, mouseX, mouseY)) {
             graphics.renderTooltip(font, Component.translatable("gui.simplestoragemanager.storage_manager_gui.clear_crafting"),
                     mouseX, mouseY);
         } else if (isPointInside(variant.lockButton(), TerminalScreenLayout.LOCK_BUTTON_SIZE, mouseX, mouseY)) {
@@ -774,11 +939,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                         .withStyle(ChatFormatting.GRAY), 180));
             }
             graphics.renderTooltip(font, lines, mouseX, mouseY);
-        } else if (hoveredOrganizeSection >= 0 && view.advanced()) {
+        } else if (!sectionMenuOpen && hoveredOrganizeSection >= 0 && view.advanced()) {
             graphics.renderTooltip(font,
                     Component.translatable("gui.simplestoragemanager.storage_manager_gui.organize_inventory"),
                     mouseX, mouseY);
-        } else if (hoveredFilterSection >= 0 && view.advanced()) {
+        } else if (!sectionMenuOpen && hoveredFilterSection >= 0 && view.advanced()) {
             graphics.renderTooltip(font,
                     Component.translatable("gui.simplestoragemanager.storage_manager_gui.open_inventory_filter"),
                     mouseX, mouseY);
@@ -801,6 +966,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (sectionMenuOpen) {
+            handleSectionMenuClick(mouseX, mouseY, button, sectionMenuSourceButton);
+            return true;
+        }
         if (!isInside(variant.searchArea(), mouseX, mouseY) && searchBar != null && searchBar.isFocused()) {
             setFocused(null);
         }
@@ -836,8 +1005,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             PacketDistributor.sendToServer(new TerminalClearCraftingPayload());
             return true;
         }
-        int sectionButtonSection = sectionButtonAt(mouseX, mouseY);
-        if (sectionButtonSection >= 0) {
+        int sectionButtonKind = sectionButtonAt(mouseX, mouseY);
+        if (sectionButtonKind != SECTION_BUTTON_NONE) {
+            if (button == 1) {
+                openSectionMenu(sectionButtonKind, mouseX, mouseY);
+            }
             handleSectionButtonClick(button);
             return true;
         }
@@ -1620,6 +1792,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 return true;
             }
             return titleEditBox.keyPressed(keyCode, scanCode, modifiers);
+        }
+        if (sectionMenuOpen && keyCode == InputConstants.KEY_ESCAPE) {
+            closeSectionMenu();
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }

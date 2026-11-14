@@ -99,6 +99,12 @@ Todos os valores ficam em `TerminalScreenLayout`. A moldura, o nome, os slots, o
 
 O botão X usa as imagens completas, redimensionadas para 8x8 pixels, em `assets/simplestoragemanager/textures/screens/cross_button.png` e `assets/simplestoragemanager/textures/screens/cross_button_highlighted.png`. Seu tooltip usa `gui.simplestoragemanager.storage_manager_gui.clear_crafting`. O botão X nos avisos verdes de substituição exibe a tooltip traduzida `screen.simplestoragemanager.dismiss_notice`. Cada seção indisponível mostra no canto superior direito um ícone de alerta de 10x10 pixels, usando as imagens completas `assets/simplestoragemanager/textures/screens/report_button.png` e `assets/simplestoragemanager/textures/screens/report_button_highlighted.png`; seu tooltip traduzido quebra automaticamente em linhas. O cadeado usa `unlocked_button.png`, `unlocked_button_highlighted.png`, `locked_button.png` e `locked_button_highlighted.png`: cada textura original de 20x20 é desenhada inteira em 10x10, com amostragem nearest-neighbor (sem recorte). O hover e o estado atual escolhem conjuntamente a textura; as tooltips traduzidas `screen.simplestoragemanager.inventory_lock.*` mostram a descrição detalhada ao pressionar Shift e quebram automaticamente em linhas. Os itens nos slots de armadura, mão secundária, crafting, resultado e inventário/hotbar do jogador mostram os tooltips padrão de ItemStack. A miniatura de crafting tem nove slots contíguos, com passo 18, e um slot de resultado nos pontos indicados na tabela. Os itens da grade são persistidos apenas durante a vida do menu; ao fechá-lo, são devolvidos ou derrubados.
 
+## Menus dropdown
+
+- Os botões de ação rápida das seções (organizar e filtro) abrem um menu dropdown com clique direito; clique esquerdo seleciona a opção, clique fora ou Esc fecha, e a seleção toca o som de UI.
+- O menu de filtro ("Permitir"/"Negar") tem as opções como linhas selecionáveis, com marcação ✓ na opção escolhida.
+- O menu de organização ("Organizar por:") tem a primeira linha como título não selecionável e as opções ("Nome", "Quantidade", "Tipo de Item", "Mod") como linhas selecionáveis; as opções ainda não têm funcionalidade implementada.
+
 ## Escala da GUI
 
 A escolha acontece no `init()` da tela usando `Minecraft.getInstance().options.guiScale().get()`, sem usar a escala efetiva de `Window`:

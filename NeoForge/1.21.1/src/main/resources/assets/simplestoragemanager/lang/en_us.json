@@ -40,5 +40,13 @@
   "screen.simplestoragemanager.dimension_selector.limit": "You can only select up to five dimensions.",
   "screen.simplestoragemanager.dimension_selector.save_failed": "Could not save the selected dimensions.",
   "gui.simplestoragemanager.storage_manager_gui.organize_inventory": "Sort Inventory",
-  "gui.simplestoragemanager.storage_manager_gui.open_inventory_filter": "Open Inventory Filter"
+  "gui.simplestoragemanager.storage_manager_gui.open_inventory_filter": "Open Inventory Filter",
+  "gui.simplestoragemanager.storage_manager_gui.filter_allow": "Allow",
+  "gui.simplestoragemanager.storage_manager_gui.filter_deny": "Deny",
+  "gui.simplestoragemanager.storage_manager_gui.filter_type": "Filter Type:",
+  "gui.simplestoragemanager.storage_manager_gui.organize_by": "Organize by:",
+  "gui.simplestoragemanager.storage_manager_gui.organize_by_name": "Name",
+  "gui.simplestoragemanager.storage_manager_gui.organize_by_quantity": "Quantity",
+  "gui.simplestoragemanager.storage_manager_gui.organize_by_item_type": "Item Type",
+  "gui.simplestoragemanager.storage_manager_gui.organize_by_mod": "Mod"
 }
