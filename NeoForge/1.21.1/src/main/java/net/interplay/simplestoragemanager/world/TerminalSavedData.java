@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.interplay.simplestoragemanager.data.TerminalConnection;
+import net.interplay.simplestoragemanager.logic.InventoryFilterLogic;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -36,6 +37,7 @@ public final class TerminalSavedData extends SavedData {
     private final Map<UUID, UUID> owners = new HashMap<>();
     private final Set<UUID> lockedTerminals = new HashSet<>();
     private final Map<UUID, String> customNames = new HashMap<>();
+    private final Map<UUID, InventoryFilterLogic.FilterConfig> filterConfigs = new HashMap<>();
 
     public static TerminalSavedData get(ServerLevel level) {
         ServerLevel overworld = level.getServer().getLevel(Level.OVERWORLD);
@@ -58,7 +60,31 @@ public final class TerminalSavedData extends SavedData {
             ordered.add(connection.withIdentity(identifier, i));
         }
         connections.put(terminalId, ordered);
+        pruneFilterConfigs(connectionIds(ordered));
         setDirty();
+    }
+
+    private static java.util.Set<UUID> connectionIds(List<TerminalConnection> connections) {
+        java.util.Set<UUID> ids = new java.util.HashSet<>();
+        for (TerminalConnection connection : connections) {
+            ids.add(connection.connectionId());
+        }
+        return ids;
+    }
+
+    private void pruneFilterConfigs(java.util.Set<UUID> activeConnectionIds) {
+        // Filter configs are keyed by connection UUID globally, so prune by active ids across all
+        // terminals to avoid keeping configs for connections that no longer exist.
+        boolean changed = false;
+        for (var connectionId : new java.util.ArrayList<>(filterConfigs.keySet())) {
+            if (!activeConnectionIds.contains(connectionId)) {
+                filterConfigs.remove(connectionId);
+                changed = true;
+            }
+        }
+        if (changed) {
+            setDirty();
+        }
     }
 
     public synchronized UUID owner(UUID terminalId) {
@@ -101,7 +127,20 @@ public final class TerminalSavedData extends SavedData {
             }
             entry.setValue(ordered);
         }
-        if (changed) setDirty();
+        if (changed) {
+            setDirty();
+            pruneFilterConfigs(currentActiveConnectionIds());
+        }
+    }
+
+    private java.util.Set<UUID> currentActiveConnectionIds() {
+        java.util.Set<UUID> ids = new java.util.HashSet<>();
+        for (List<TerminalConnection> connections : connections.values()) {
+            for (TerminalConnection connection : connections) {
+                ids.add(connection.connectionId());
+            }
+        }
+        return ids;
     }
 
     public synchronized boolean isConnectedToOtherTerminal(ServerLevel level, UUID terminalId,
@@ -189,6 +228,21 @@ public final class TerminalSavedData extends SavedData {
 
     public synchronized void clearCustomName(UUID connectionId) {
         if (customNames.remove(connectionId) != null) {
+            setDirty();
+        }
+    }
+
+    public synchronized InventoryFilterLogic.FilterConfig getFilterConfig(UUID connectionId) {
+        return filterConfigs.get(connectionId);
+    }
+
+    public synchronized void putFilterConfig(UUID connectionId, InventoryFilterLogic.FilterConfig config) {
+        filterConfigs.put(connectionId, config);
+        setDirty();
+    }
+
+    public synchronized void removeFilterConfig(UUID connectionId) {
+        if (filterConfigs.remove(connectionId) != null) {
             setDirty();
         }
     }
@@ -291,6 +345,16 @@ public final class TerminalSavedData extends SavedData {
                 data.customNames.put(customNameConnectionId, customName);
             }
         }
+        ListTag filterConfigList = tag.getList("FilterConfigs", Tag.TAG_COMPOUND);
+        for (int i = 0; i < filterConfigList.size(); i++) {
+            CompoundTag filterConfigTag = filterConfigList.getCompound(i);
+            UUID connectionId = filterConfigTag.hasUUID("ConnectionId")
+                    ? filterConfigTag.getUUID("ConnectionId") : null;
+            if (connectionId != null && filterConfigTag.contains("Mode")) {
+                data.filterConfigs.put(connectionId,
+                        InventoryFilterLogic.fromTag(provider, filterConfigTag));
+            }
+        }
         return data;
     }
 
@@ -360,6 +424,16 @@ public final class TerminalSavedData extends SavedData {
             customNameList.add(customNameTag);
         }
         tag.put("CustomNames", customNameList);
+
+        ListTag filterConfigList = new ListTag();
+        for (Map.Entry<UUID, InventoryFilterLogic.FilterConfig> entry : filterConfigs.entrySet()) {
+            CompoundTag filterConfigTag = new CompoundTag();
+            filterConfigTag.putUUID("ConnectionId", entry.getKey());
+            filterConfigTag.merge(InventoryFilterLogic.toTag(provider, entry.getValue()));
+            filterConfigList.add(filterConfigTag);
+        }
+        tag.put("FilterConfigs", filterConfigList);
+
         tag.put("Terminals", terminalList);
         return tag;
     }

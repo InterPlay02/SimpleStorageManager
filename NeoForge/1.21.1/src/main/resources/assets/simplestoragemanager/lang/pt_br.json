@@ -44,6 +44,8 @@
   "gui.simplestoragemanager.storage_manager_gui.filter_allow": "Permitir",
   "gui.simplestoragemanager.storage_manager_gui.filter_deny": "Negar",
   "gui.simplestoragemanager.storage_manager_gui.filter_type": "Tipo de Filtro:",
+  "gui.simplestoragemanager.storage_manager_gui.filter_editor_title": "Editor de Filtro de Itens",
+  "gui.simplestoragemanager.storage_manager_gui.close_inventory_filter": "Fechar Filtro de Inventário",
   "gui.simplestoragemanager.storage_manager_gui.organize_by": "Organizar por:",
   "gui.simplestoragemanager.storage_manager_gui.organize_by_name": "Nome",
   "gui.simplestoragemanager.storage_manager_gui.organize_by_quantity": "Quantidade",

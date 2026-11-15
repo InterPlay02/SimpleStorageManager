@@ -4,10 +4,10 @@ license="Not specified"
 
 [[mods]]
 modId="simplestoragemanager"
-version="0.6"
+version="0.7"
 displayName="Simple Storage Manager"
 displayURL=""
-credits="Created using Codex and Github Copilot."
+credits="Created using the help of a bunch of AI agents."
 authors="InterPlay"
 
 # Start of user code block mod configuration

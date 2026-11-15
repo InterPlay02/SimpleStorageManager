@@ -99,11 +99,21 @@ Todos os valores ficam em `TerminalScreenLayout`. A moldura, o nome, os slots, o
 
 O botão X usa as imagens completas, redimensionadas para 8x8 pixels, em `assets/simplestoragemanager/textures/screens/cross_button.png` e `assets/simplestoragemanager/textures/screens/cross_button_highlighted.png`. Seu tooltip usa `gui.simplestoragemanager.storage_manager_gui.clear_crafting`. O botão X nos avisos verdes de substituição exibe a tooltip traduzida `screen.simplestoragemanager.dismiss_notice`. Cada seção indisponível mostra no canto superior direito um ícone de alerta de 10x10 pixels, usando as imagens completas `assets/simplestoragemanager/textures/screens/report_button.png` e `assets/simplestoragemanager/textures/screens/report_button_highlighted.png`; seu tooltip traduzido quebra automaticamente em linhas. O cadeado usa `unlocked_button.png`, `unlocked_button_highlighted.png`, `locked_button.png` e `locked_button_highlighted.png`: cada textura original de 20x20 é desenhada inteira em 10x10, com amostragem nearest-neighbor (sem recorte). O hover e o estado atual escolhem conjuntamente a textura; as tooltips traduzidas `screen.simplestoragemanager.inventory_lock.*` mostram a descrição detalhada ao pressionar Shift e quebram automaticamente em linhas. Os itens nos slots de armadura, mão secundária, crafting, resultado e inventário/hotbar do jogador mostram os tooltips padrão de ItemStack. A miniatura de crafting tem nove slots contíguos, com passo 18, e um slot de resultado nos pontos indicados na tabela. Os itens da grade são persistidos apenas durante a vida do menu; ao fechá-lo, são devolvidos ou derrubados.
 
-## Menus dropdown
+## Menus dropdown dos botões de inventário
 
 - Os botões de ação rápida das seções (organizar e filtro) abrem um menu dropdown com clique direito; clique esquerdo seleciona a opção, clique fora ou Esc fecha, e a seleção toca o som de UI.
 - O menu de filtro ("Permitir"/"Negar") tem as opções como linhas selecionáveis, com marcação ✓ na opção escolhida.
 - O menu de organização ("Organizar por:") tem a primeira linha como título não selecionável e as opções ("Nome", "Quantidade", "Tipo de Item", "Mod") como linhas selecionáveis; as opções ainda não têm funcionalidade implementada.
+
+## Filtro de inventário
+
+- Cada botão de filtro está conectado ao inventário da seção onde está localizado; clique esquerdo ativa o modo de edição de filtro para aquele inventário específico, e clicar novamente salva a configuração e desativa o modo de edição.
+- O modo de edição é 100% client side: apenas ao salvar (clicar no botão de filtro) as alterações são enviadas ao servidor via `TerminalFilterSavePayload` para validação e persistência.
+- O dropdown do botão (Permitir/Negar) define se o inventário permitirá apenas os itens configurados no filtro (quantidades ignoradas) ou proibirá aqueles itens de serem inseridos. Com o filtro vazio, nenhuma restrição é aplicada, independentemente da opção selecionada.
+- Cada inventário conectado tem sua própria configuração de filtro, independente dos outros; vários inventários podem estar em edição simultaneamente sem afetar uns aos outros.
+- Ao ativar a edição, os slots da seção exibem cópias dos itens configurados (ou ficam vazios na primeira ativação). Clique com item no cursor adiciona uma cópia de uma unidade ao slot sem consumir o cursor nem afetar o inventário físico; clique sem item limpa o slot.
+- A configuração persiste após fechar a GUI, salvar/recarregar o mundo e reiniciar o jogo. Fechar a GUI sem salvar descarta as alterações não salvas e preserva a configuração anterior. Clique direito no botão de filtro não ativa nem desativa o modo de edição.
+- O servidor valida o filtro apenas quando o player salva; caso ocorra erro de validação, a configuração previamente salva permanece como persistente.
 
 ## Escala da GUI
 

@@ -37,6 +37,7 @@ import net.interplay.simplestoragemanager.access.MultiblockDiscovery;
 import net.interplay.simplestoragemanager.data.TerminalConnection;
 import net.interplay.simplestoragemanager.data.TerminalDataComponents;
 import net.interplay.simplestoragemanager.item.inventory.StorageManagerInventoryCapability;
+import net.interplay.simplestoragemanager.logic.InventoryFilterLogic;
 import net.interplay.simplestoragemanager.logic.StorageSearch;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
 import net.interplay.simplestoragemanager.logic.ShiftDragInsertionRules;
@@ -55,6 +56,7 @@ import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayloa
 import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
+import net.interplay.simplestoragemanager.network.TerminalFilterSavePayload;
 import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewPayload;
 import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewRequestPayload;
 import net.interplay.simplestoragemanager.world.TerminalSavedData;
@@ -274,7 +276,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         List<TerminalViewPayload.Section> sections = new ArrayList<>(view.sections());
         TerminalViewPayload.Section current = sections.get(sectionIndex);
         sections.set(sectionIndex, new TerminalViewPayload.Section(label, current.coordinate(), status,
-                current.slotCount()));
+                current.slotCount(), current.filterItems(), current.filterMode()));
         List<TerminalViewPayload.VisibleSlot> visibleSlots = view.visibleSlots().stream()
                 .filter(slot -> slot.section() != sectionIndex)
                 .toList();
@@ -672,7 +674,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             int pending = originRecords.stream().mapToInt(TerminalOriginMemory.OriginRecord::remaining).sum();
             int requested = Math.min(Math.min(stack.getCount(), maximum - inserted), pending);
             if (requested <= 0) continue;
-            int moved = insertIntoOriginInventory(resolution.adapter().handler(), stack, requested);
+            int moved = insertIntoOriginInventory(resolution.adapter().handler(), stack, requested, current);
             if (moved > 0) {
                 stack.shrink(moved);
                 inserted += moved;
@@ -686,9 +688,11 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return current != null && origin != null && current.connectionId().equals(origin.connectionId());
     }
 
-    private int insertIntoOriginInventory(IItemHandler handler, ItemStack stack, int requested) {
+    private int insertIntoOriginInventory(IItemHandler handler, ItemStack stack, int requested,
+                                          TerminalConnection connection) {
         if (stack.isEmpty() || requested <= 0) return 0;
-        return insertIntoDestinations(stack, requested, destinationsFor(handler, 0, handler.getSlots()));
+        // Devolver itens ao inventário de origem ainda está sujeito ao filtro de destino daquela conexão.
+        return insertIntoDestinations(stack, requested, destinationsFor(handler, 0, handler.getSlots(), connection));
     }
 
     private List<String> selectedDimensions() {
@@ -748,8 +752,14 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             ServerSection section = entry.section();
             int rows = Math.max(1, (section.slotCount() + 8) / 9);
             int slotY = cursor + SECTION_LABEL_HEIGHT;
+            TerminalConnection sectionConnection = section.connection();
+            InventoryFilterLogic.FilterConfig filterConfig = sectionConnection == null
+                    ? null : TerminalSavedData.get(player.serverLevel()).getFilterConfig(sectionConnection.connectionId());
+            List<ItemStack> filterItems = filterConfig == null ? List.of() : filterConfig.items();
+            int filterMode = filterConfig == null ? 0
+                    : filterConfig.mode() == InventoryFilterLogic.FilterMode.ALLOW ? 0 : 1;
             sections.add(new TerminalViewPayload.Section(label(section), coordinate(section.connection()),
-                    section.status().ordinal(), section.slotCount()));
+                    section.status().ordinal(), section.slotCount(), filterItems, filterMode));
             for (int slot = 0; slot < section.slotCount(); slot++) {
                 ItemStack stack = section.stackAt(slot);
                 TerminalConnection connection = section.searchResults().isEmpty()
@@ -1071,7 +1081,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter adapter = resolution.adapter();
             if (resolution.status() != ConnectionStatus.AVAILABLE || adapter == null) continue;
             for (int slot = 0; slot < Math.min(section.slotCount(), adapter.getSlots()); slot++) {
-                destinations.add(new RemoteDestination(adapter.handler(), slot));
+                destinations.add(new RemoteDestination(adapter.handler(), slot, section.connection()));
             }
         }
         return destinations;
@@ -1407,13 +1417,14 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     private int insertShiftDragSlot(PreviewTarget target, ItemStack stack, int requested) {
         if (stack.isEmpty() || requested <= 0) return 0;
         InventoryAdapter adapter = target.adapter();
+        if (!filterAllowsInsertion(adapter.connection(), stack)) return 0;
         int slot = target.handlerSlot();
         if (adapter.implementationKind() == TerminalConnection.ImplementationKind.VANILLA_CONTAINER) {
             int current = adapter.handler().getStackInSlot(slot).getCount();
             int limit = ShiftDragInsertionRules.vanillaTotalLimit(
                     adapter.handler().getSlotLimit(slot), stack.getMaxStackSize());
             return insertRemoteSlot(adapter.handler(), slot, stack,
-                    Math.min(requested, Math.max(0, limit - current)));
+                    Math.min(requested, Math.max(0, limit - current)), adapter.connection());
         }
         if (supportsSophisticatedManualClick(adapter, slot)) {
             return Math.max(0, SophisticatedStorageManualClicks.insert(world, adapter, slot, stack, requested));
@@ -1421,7 +1432,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (supportsStorageDrawersManualClick(adapter, slot)) {
             return Math.max(0, StorageDrawersManualClicks.insert(world, adapter, slot, stack, requested));
         }
-        return insertRemoteSlot(adapter.handler(), slot, stack, requested);
+        return insertRemoteSlot(adapter.handler(), slot, stack, requested, adapter.connection());
     }
 
     private static long destinationKey(int section, int slot) {
@@ -1612,6 +1623,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             return 0;
         }
         if (!carried.isEmpty() && supportsSophisticatedManualClick(adapter, slot)) {
+            if (!filterAllowsInsertion(adapter.connection(), carried)) return 0;
             ItemStack existing = handler.getStackInSlot(slot);
             if (button == 0 && !existing.isEmpty()) {
                 if (ItemStack.isSameItemSameComponents(existing, carried)) {
@@ -1638,6 +1650,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             return Math.max(0, inserted);
         }
         if (!carried.isEmpty() && supportsStorageDrawersManualClick(adapter, slot)) {
+            if (!filterAllowsInsertion(adapter.connection(), carried)) return 0;
             ItemStack existing = handler.getStackInSlot(slot);
             if (button == 0 && !existing.isEmpty()) {
                 if (ItemStack.isSameItemSameComponents(existing, carried)) {
@@ -1671,7 +1684,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     : TerminalInsertionRules.extractionCount(existing.getCount(), existing.getMaxStackSize(), false);
             int cursorCapacity = existing.getMaxStackSize();
             int extractedCount = Math.min(amount, cursorCapacity);
-            ItemStack extracted = extractRemoteSlot(handler, slot, extractedCount);
+            ItemStack extracted = extractRemoteSlot(handler, slot, extractedCount, adapter.connection());
             if (extracted.isEmpty()) return 0;
             recordExtraction((ServerPlayer) entity, adapter.connection(), slot, extracted);
             setCarried(extracted);
@@ -1682,7 +1695,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             return swapRemoteSlot(adapter, slot, carried, button);
         }
         int requested = button == 1 ? 1 : carried.getCount();
-        int inserted = insertRemoteSlot(handler, slot, carried, requested);
+        int inserted = insertRemoteSlot(handler, slot, carried, requested, adapter.connection());
         setCarried(carried);
         return inserted;
     }
@@ -1701,18 +1714,18 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (!ItemStack.isSameItemSameComponents(existing, simulated)
                 || simulated.getCount() != existing.getCount()) return 0;
 
-        ItemStack extracted = extractRemoteSlot(handler, slot, existing.getCount());
+        ItemStack extracted = extractRemoteSlot(handler, slot, existing.getCount(), adapter.connection());
         if (!ItemStack.isSameItemSameComponents(existing, extracted)
                 || extracted.getCount() != existing.getCount()) {
-            returnToRemoteSlot(handler, slot, extracted);
+            returnToRemoteSlot(handler, slot, extracted, adapter.connection());
             return 0;
         }
 
         ItemStack incoming = carried.copy();
-        int inserted = insertRemoteSlot(handler, slot, incoming, incoming.getCount());
+        int inserted = insertRemoteSlot(handler, slot, incoming, incoming.getCount(), adapter.connection());
         if (inserted != carried.getCount()) {
-            if (inserted > 0) extractRemoteSlot(handler, slot, inserted);
-            returnToRemoteSlot(handler, slot, extracted);
+            if (inserted > 0) extractRemoteSlot(handler, slot, inserted, adapter.connection());
+            returnToRemoteSlot(handler, slot, extracted, adapter.connection());
             return 0;
         }
 
@@ -1729,7 +1742,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (!ItemStack.isSameItemSameComponents(existing, simulated)
                 || simulated.getCount() != existing.getCount()) return 0;
 
-        ItemStack extracted = extractRemoteSlot(handler, slot, existing.getCount());
+        ItemStack extracted = extractRemoteSlot(handler, slot, existing.getCount(), adapter.connection());
         if (!ItemStack.isSameItemSameComponents(existing, extracted)
                 || extracted.getCount() != existing.getCount()) {
             if (!extracted.isEmpty()) {
@@ -1783,15 +1796,18 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return 0;
     }
 
-    private void returnToRemoteSlot(IItemHandler handler, int slot, ItemStack stack) {
+    private void returnToRemoteSlot(IItemHandler handler, int slot, ItemStack stack,
+                                    TerminalConnection connection) {
         if (stack.isEmpty()) return;
-        insertRemoteSlot(handler, slot, stack, stack.getCount());
+        // Devolver itens ao inventário de origem ainda está sujeito ao filtro de destino daquela conexão.
+        insertRemoteSlot(handler, slot, stack, stack.getCount(), connection);
         if (!stack.isEmpty() && entity instanceof ServerPlayer player) {
             player.getInventory().placeItemBackInInventory(stack);
         }
     }
 
-    private ItemStack extractRemoteSlot(IItemHandler handler, int slot, int requested) {
+    private ItemStack extractRemoteSlot(IItemHandler handler, int slot, int requested,
+                                        TerminalConnection connection) {
         if (requested <= 0 || slot < 0 || slot >= handler.getSlots()) return ItemStack.EMPTY;
         ItemStack existing = handler.getStackInSlot(slot).copy();
         if (existing.isEmpty()) return ItemStack.EMPTY;
@@ -1801,14 +1817,14 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (amount <= 0) return ItemStack.EMPTY;
         ItemStack extracted = handler.extractItem(slot, amount, false);
         if (extracted.isEmpty() || !ItemStack.isSameItemSameComponents(existing, extracted)) {
-            returnToRemoteSlot(handler, slot, extracted);
+            returnToRemoteSlot(handler, slot, extracted, connection);
             return ItemStack.EMPTY;
         }
         if (extracted.getCount() > amount) {
             int excessCount = extracted.getCount() - amount;
             ItemStack excess = extracted.copyWithCount(excessCount);
             extracted.shrink(excessCount);
-            returnToRemoteSlot(handler, slot, excess);
+            returnToRemoteSlot(handler, slot, excess, connection);
         }
         return extracted;
     }
@@ -1880,6 +1896,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter adapter = resolution.adapter();
             if (resolution.status() != ConnectionStatus.AVAILABLE || adapter == null
                     || handlerSlot < 0 || handlerSlot >= adapter.getSlots()) continue;
+            if (!filterAllowsInsertion(connection, carried)) continue;
             boolean directManual = supportsSophisticatedManualClick(adapter, handlerSlot)
                     || supportsStorageDrawersManualClick(adapter, handlerSlot);
             int capacity = directManual
@@ -1891,7 +1908,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     .anyMatch(record -> sameOriginConnection(targetConnection, record.connection()))) {
                 targetsOrigin = true;
             }
-            destinations.add(new RemoteDestination(adapter.handler(), handlerSlot));
+            destinations.add(new RemoteDestination(adapter.handler(), handlerSlot, connection));
             manualDestinations.add(new ManualRemoteDestination(adapter, handlerSlot, directManual, capacity));
             hasDirectManualDestination |= directManual;
         }
@@ -1927,7 +1944,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     if (amount <= 0) continue;
                     int inserted = hasDirectManualDestination
                             ? insertManualRemoteSlot(destination, carried, amount)
-                            : insertRemoteSlot(destinations.get(i).handler(), destination.slot(), carried, amount);
+                            : insertRemoteSlot(destinations.get(i).handler(), destination.slot(), carried, amount,
+                                    null);
                     distributionBudget -= inserted;
                     remoteInserted += inserted;
                 }
@@ -1941,7 +1959,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                     int inserted = hasDirectManualDestination
                             ? insertManualRemoteSlot(destination, carried, requestedAmount)
                             : insertRemoteSlot(destinations.get(i).handler(), destination.slot(),
-                                    carried, requestedAmount);
+                                    carried, requestedAmount, null);
                     distributionBudget -= inserted;
                     remoteInserted += inserted;
                 }
@@ -1954,6 +1972,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     }
 
     private int insertManualRemoteSlot(ManualRemoteDestination destination, ItemStack carried, int requested) {
+        if (!filterAllowsInsertion(destination.adapter().connection(), carried)) return 0;
         if (supportsSophisticatedManualClick(destination.adapter(), destination.slot())) {
             return Math.max(0, SophisticatedStorageManualClicks.insert(
                     world, destination.adapter(), destination.slot(), carried, requested));
@@ -1962,7 +1981,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             return Math.max(0, StorageDrawersManualClicks.insert(
                     world, destination.adapter(), destination.slot(), carried, requested));
         }
-        return insertRemoteSlot(destination.adapter().handler(), destination.slot(), carried, requested);
+        return insertRemoteSlot(destination.adapter().handler(), destination.slot(), carried, requested,
+                destination.adapter().connection());
     }
 
     private void handleRemoteShiftDrag(ServerPlayer player, TerminalStorageClickPayload click) {
@@ -1992,6 +2012,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
 
     private void fillRemoteSlotCreative(ManualRemoteDestination destination, ItemStack stack) {
         if (stack.isEmpty()) return;
+        if (!filterAllowsInsertion(destination.adapter().connection(), stack)) return;
         IItemHandler handler = destination.adapter().handler();
         int slot = destination.slot();
         ItemStack existing = handler.getStackInSlot(slot);
@@ -2006,7 +2027,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         } else if (supportsStorageDrawersManualClick(destination.adapter(), slot)) {
             StorageDrawersManualClicks.insert(world, destination.adapter(), slot, offered, capacity);
         } else {
-            insertRemoteSlot(handler, slot, offered, capacity);
+            insertRemoteSlot(handler, slot, offered, capacity, destination.adapter().connection());
         }
     }
 
@@ -2019,8 +2040,10 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 && simulatedRemainder.getCount() == 0;
     }
 
-    private int insertRemoteSlot(IItemHandler handler, int slot, ItemStack carried, int requested) {
+    private int insertRemoteSlot(IItemHandler handler, int slot, ItemStack carried, int requested,
+                                 TerminalConnection connection) {
         if (carried.isEmpty() || requested <= 0) return 0;
+        if (!filterAllowsInsertion(connection, carried)) return 0;
         ItemStack existing = handler.getStackInSlot(slot);
         if ((!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, carried))
                 || !handler.isItemValid(slot, carried)) return 0;
@@ -2040,6 +2063,13 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return inserted;
     }
 
+    private boolean filterAllowsInsertion(TerminalConnection connection, ItemStack stack) {
+        if (stack.isEmpty() || connection == null) return true;
+        InventoryFilterLogic.FilterConfig config = TerminalSavedData.get((ServerLevel) world)
+                .getFilterConfig(connection.connectionId());
+        return InventoryFilterLogic.isInsertAllowed(config, stack);
+    }
+
     private boolean moveRemoteToPlayer(ServerPlayer player, InventoryAdapter adapter, int slot) {
         IItemHandler sourceHandler = adapter.handler();
         ItemStack source = sourceHandler.getStackInSlot(slot).copy();
@@ -2057,7 +2087,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 requested, simulatedExtraction.getCount(), playerCapacity);
         if (amount <= 0) return false;
 
-        ItemStack extracted = extractRemoteSlot(sourceHandler, slot, amount);
+        ItemStack extracted = extractRemoteSlot(sourceHandler, slot, amount, adapter.connection());
         if (!ItemStack.isSameItemSameComponents(source, extracted) || extracted.isEmpty()) {
             return false;
         }
@@ -2068,7 +2098,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (inserted > 0) {
             recordExtraction(player, adapter.connection(), slot, extracted.copyWithCount(inserted));
         }
-        if (!offered.isEmpty()) returnToRemoteSlot(sourceHandler, slot, offered);
+        if (!offered.isEmpty()) returnToRemoteSlot(sourceHandler, slot, offered, adapter.connection());
         return inserted > 0;
     }
 
@@ -2079,15 +2109,17 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
 
     private int simulateIntoPlayerRange(ItemStack stack, int requested, int start, int end) {
         if (stack.isEmpty() || requested <= 0) return 0;
+        // Player inventory ranges are not remote connections, so no filter applies.
         List<RemoteDestination> destinations = destinationsFor(
-                playerRangeHandler(start, end, stack), 0, end - start);
+                playerRangeHandler(start, end, stack), 0, end - start, null);
         return simulateIntoDestinations(stack, requested, destinations);
     }
 
-    private List<RemoteDestination> destinationsFor(IItemHandler handler, int start, int end) {
+    private List<RemoteDestination> destinationsFor(IItemHandler handler, int start, int end,
+                                                    TerminalConnection connection) {
         List<RemoteDestination> destinations = new ArrayList<>();
         for (int slot = Math.max(0, start); slot < Math.min(handler.getSlots(), end); slot++) {
-            destinations.add(new RemoteDestination(handler, slot));
+            destinations.add(new RemoteDestination(handler, slot, connection));
         }
         return destinations;
     }
@@ -2108,7 +2140,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 int slot = destination.slot();
                 ItemStack existing = handler.getStackInSlot(slot);
                 if (!acceptsInsertionSlot(existing, stack, pass) || !handler.isItemValid(slot, stack)) continue;
-                inserted += insertRemoteSlot(handler, slot, stack, requested - inserted);
+                inserted += insertRemoteSlot(handler, slot, stack, requested - inserted,
+                        destination.connection());
             }
         }
         return inserted;
@@ -2152,6 +2185,44 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 section.connection().connectionId(), payload.name());
         refreshServerView();
         broadcastRenameToTerminalViewers(player);
+    }
+
+    public void handleFilterSave(ServerPlayer player, TerminalFilterSavePayload payload) {
+        if (world.isClientSide || !stillValid(player)) return;
+        if (!search.isBlank()) return;
+        if (!canUseConnectedInventories(player, true)) return;
+        int targetSection = payload.section();
+        if (targetSection < 0 || targetSection >= serverSections.size()) return;
+        ServerSection section = serverSections.get(targetSection);
+        if (section.connection() == null) return;
+        UUID connectionId = section.connection().connectionId();
+        InventoryFilterLogic.FilterMode mode = payload.isAllow()
+                ? InventoryFilterLogic.FilterMode.ALLOW : InventoryFilterLogic.FilterMode.DENY;
+        List<ItemStack> items = payload.items().stream()
+                .map(ItemStack::copy)
+                .filter(stack -> !stack.isEmpty())
+                .toList();
+        TerminalSavedData.get(player.serverLevel()).putFilterConfig(connectionId,
+                new InventoryFilterLogic.FilterConfig(items, mode));
+        refreshServerView();
+        broadcastFilterToTerminalViewers(player, connectionId);
+    }
+
+    private void broadcastFilterToTerminalViewers(ServerPlayer requester, UUID connectionId) {
+        UUID id = terminalId;
+        if (id == null) return;
+        ServerLevel level = requester.serverLevel();
+        List<ServerPlayer> players = level.getServer().getPlayerList().getPlayers();
+        List<ServerPlayer> viewers = new ArrayList<>();
+        for (ServerPlayer candidate : players) {
+            if (candidate.containerMenu instanceof StorageManagerGUIMenu menu
+                    && id.equals(menu.terminalId())) {
+                viewers.add(candidate);
+            }
+        }
+        for (ServerPlayer viewer : viewers) {
+            sendView(viewer, false);
+        }
     }
 
     private void broadcastRenameToTerminalViewers(ServerPlayer requester) {
@@ -2245,9 +2316,11 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     private void insertIntoPlayerInventory(ItemStack stack) {
         if (stack.isEmpty()) return;
         IItemHandler main = playerRangeHandler(mainInventoryStart, hotbarStart, stack);
-        insertIntoDestinations(stack, stack.getCount(), destinationsFor(main, 0, main.getSlots()));
+        insertIntoDestinations(stack, stack.getCount(),
+                destinationsFor(main, 0, main.getSlots(), null));
         IItemHandler hotbar = playerRangeHandler(hotbarStart, hotbarStart + 9, stack);
-        insertIntoDestinations(stack, stack.getCount(), destinationsFor(hotbar, 0, hotbar.getSlots()));
+        insertIntoDestinations(stack, stack.getCount(),
+                destinationsFor(hotbar, 0, hotbar.getSlots(), null));
     }
 
     private ItemStack insertIntoConnectedInventories(ItemStack stack) {
@@ -2267,7 +2340,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
             if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) continue;
             IItemHandler handler = resolution.adapter().handler();
-            destinations.addAll(destinationsFor(handler, 0, handler.getSlots()));
+            destinations.addAll(destinationsFor(handler, 0, handler.getSlots(), connection));
         }
         int inserted = insertIntoDestinations(stack, stack.getCount(), destinations);
         consumeMatchingOriginRecords(player, id, itemType, inserted);
@@ -2296,7 +2369,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             InventoryAdapter adapter = resolution.adapter();
             if (resolution.status() != ConnectionStatus.AVAILABLE || adapter == null) continue;
             for (int slot = 0; slot < Math.min(section.slotCount(), adapter.getSlots()); slot++) {
-                destinations.add(new RemoteDestination(adapter.handler(), slot));
+                destinations.add(new RemoteDestination(adapter.handler(), slot, section.connection()));
             }
         }
 
@@ -2311,7 +2384,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (resolution.status() != ConnectionStatus.AVAILABLE || adapter == null || slot >= adapter.getSlots()) {
             return;
         }
-        destinations.add(new RemoteDestination(adapter.handler(), slot));
+        destinations.add(new RemoteDestination(adapter.handler(), slot, connection));
     }
 
     private static boolean acceptsInsertionSlot(ItemStack existing, ItemStack incoming, int pass) {
@@ -2387,17 +2460,22 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 ? previousRemote : findConnectedSlot(serverPlayer, output);
         if (connected == null) return new CraftingOutputInsertion(false, previousRemote);
         ItemStack moving = output.copy();
-        int inserted = insertRemoteSlot(connected.handler(), connected.slot(), moving, moving.getCount());
+        if (!filterAllowsInsertion(connected.connection(), moving)) {
+            return new CraftingOutputInsertion(false, previousRemote);
+        }
+        int inserted = insertRemoteSlot(connected.handler(), connected.slot(), moving, moving.getCount(),
+                connected.connection());
         return new CraftingOutputInsertion(inserted == output.getCount(), connected);
     }
 
     private boolean canInsertConnectedStack(ConnectedDestination destination, ItemStack stack) {
+        if (!filterAllowsInsertion(destination.connection(), stack)) return false;
         IItemHandler handler = destination.handler();
         if (destination.slot() >= handler.getSlots()) return false;
         ItemStack existing = handler.getStackInSlot(destination.slot());
         if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, stack)) return false;
         return simulateIntoDestinations(stack, stack.getCount(),
-                List.of(new RemoteDestination(handler, destination.slot()))) == stack.getCount();
+                List.of(new RemoteDestination(handler, destination.slot(), destination.connection()))) == stack.getCount();
     }
 
     @Override
@@ -2472,7 +2550,8 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         if (connected == null) return ItemStack.EMPTY;
         ItemStack moved = source.remove(original.getCount());
         if (moved.isEmpty()) return ItemStack.EMPTY;
-        int inserted = insertRemoteSlot(connected.handler(), connected.slot(), moved, moved.getCount());
+        int inserted = insertRemoteSlot(connected.handler(), connected.slot(), moved, moved.getCount(),
+                connected.connection());
         ItemStack remainder = moved;
         if (!remainder.isEmpty()) source.set(remainder);
         if (inserted <= 0) return ItemStack.EMPTY;
@@ -2516,14 +2595,15 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
         if (connections.isEmpty() || !canUseConnectedInventories(player, true)) return null;
         for (TerminalConnection connection : connections) {
+            if (!filterAllowsInsertion(connection, stack)) continue;
             InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
             if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) continue;
             IItemHandler handler = resolution.adapter().handler();
             for (int slot = 0; slot < handler.getSlots(); slot++) {
                 if (!handler.getStackInSlot(slot).isEmpty() || !handler.isItemValid(slot, stack)) continue;
                 if (simulateIntoDestinations(stack, stack.getCount(),
-                        List.of(new RemoteDestination(handler, slot))) == stack.getCount()) {
-                    return new ConnectedDestination(handler, slot);
+                        List.of(new RemoteDestination(handler, slot, connection))) == stack.getCount()) {
+                    return new ConnectedDestination(handler, slot, connection);
                 }
             }
         }
@@ -2586,9 +2666,9 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         };
     }
 
-    private record ConnectedDestination(IItemHandler handler, int slot) { }
+    private record ConnectedDestination(IItemHandler handler, int slot, TerminalConnection connection) { }
     private record CraftingOutputInsertion(boolean inserted, ConnectedDestination remoteDestination) { }
-    private record RemoteDestination(IItemHandler handler, int slot) { }
+    private record RemoteDestination(IItemHandler handler, int slot, TerminalConnection connection) { }
     private record ManualRemoteDestination(
             InventoryAdapter adapter, int slot, boolean directManual, int capacity) { }
 
@@ -2606,7 +2686,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null
                     || resolution.adapter().isStorage() != storageOnly) continue;
             IItemHandler handler = resolution.adapter().handler();
-            destinations.addAll(destinationsFor(handler, 0, handler.getSlots()));
+            destinations.addAll(destinationsFor(handler, 0, handler.getSlots(), connection));
         }
         int inserted = insertIntoDestinations(stack, stack.getCount(), destinations);
         consumeMatchingOriginRecords(player, id, itemType, inserted);

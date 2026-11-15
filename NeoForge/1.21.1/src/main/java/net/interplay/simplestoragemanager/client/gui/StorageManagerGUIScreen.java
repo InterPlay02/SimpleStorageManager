@@ -33,17 +33,20 @@ import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
 import net.interplay.simplestoragemanager.network.TerminalRenamePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
+import net.interplay.simplestoragemanager.logic.InventoryFilterLogic;
 import net.interplay.simplestoragemanager.logic.TerminalScaleChoice;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
 import net.interplay.simplestoragemanager.logic.TerminalTitleLogic;
 import net.interplay.simplestoragemanager.logic.UpgradeSlotRules;
 import net.interplay.simplestoragemanager.logic.ManualInsertionRules;
+import net.interplay.simplestoragemanager.network.TerminalFilterSavePayload;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModScreens;
 
-import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -91,9 +94,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private static final int FILTER_MENU_ITEM_COUNT = 2;
     private static final int SECTION_MENU_OFFSET_X = 10;
     private static final int SECTION_MENU_OFFSET_Y = 10;
-    private static final String MENU_CHECK_MARK = "\u2713";
+    private static final String MENU_CHECK_MARK = "\u2714";
     private static final int MENU_TITLE_COLOR = 0xFFFFFFFF;
     private static final int MENU_OPTION_COLOR = 0xFFfb8f13;
+    private static final int MENU_OPTION_COLOR_UNSELECTED = 0xFF808080;
 
     private final Player player;
     private TerminalScreenLayout.Variant variant = TerminalScreenLayout.SMALL;
@@ -119,8 +123,14 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private int hoveredFilterSection = -1;
     private boolean sectionMenuOpen;
     private int sectionMenuSourceButton = SECTION_BUTTON_NONE;
+    private int sectionMenuSourceSection = -1;
     private int sectionMenuSelectedOrganize = -1;
-    private int sectionMenuSelectedFilter = -1;
+    /** Sections currently in filter-edit mode (many may be edited at the same time). */
+    private final Set<Integer> filterEditSections = new HashSet<>();
+    /** Filter entries being edited for each section, transient and client side only. */
+    private final Map<Integer, List<ItemStack>> filterEditItems = new HashMap<>();
+    /** Filter mode being edited for each section (0 = allow, 1 = deny). */
+    private final Map<Integer, Integer> filterSectionMode = new HashMap<>();
     private int sectionMenuX;
     private int sectionMenuY;
     private final ClientTooltipPositioner sectionMenuPositioner = new ClientTooltipPositioner() {
@@ -268,7 +278,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         List<TerminalViewPayload.Section> sections = new ArrayList<>(view.sections());
         TerminalViewPayload.Section current = sections.get(sectionIndex);
         sections.set(sectionIndex, new TerminalViewPayload.Section(label, current.coordinate(), current.status(),
-                current.slotCount()));
+                current.slotCount(), current.filterItems(), current.filterMode()));
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(), sections,
                 view.visibleSlots(), view.notices(), view.locked(), view.originTargets(), view.operationSequence(),
                 view.playerSlots(), view.canMutateInventories(), view.advanced());
@@ -310,6 +320,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     private void handleTitleClick(int sectionIndex, double mouseX, double mouseY, int button) {
         if (button != 0) return;
+        if (isFilterEditing(sectionIndex)) return;
         long now = System.currentTimeMillis();
         boolean doubleClick = sectionIndex == lastTitleClickSection
                 && now - lastTitleClickTime < 500L
@@ -332,10 +343,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         return new int[]{filterButtonLeft, filterButtonRight, organizeButtonLeft, organizeButtonRight, buttonY};
     }
 
-    private int sectionButtonAt(double mouseX, double mouseY) {
+    private SectionButtonHit sectionButtonHit(double mouseX, double mouseY) {
         TerminalScreenLayout.Rect area = variant.contentArea();
-        if (!isInside(area, mouseX, mouseY)) return SECTION_BUTTON_NONE;
-        if (!view.advanced()) return SECTION_BUTTON_NONE;
+        if (!isInside(area, mouseX, mouseY)) return null;
+        if (!view.advanced()) return null;
         int cursor = area.top() + 2 - view.scrollOffset();
         for (ClientLayoutEntry entry : layoutEntries()) {
             if (entry.notice() != null) {
@@ -358,13 +369,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 boolean filterHovered = mouseX >= filterButtonLeft && mouseX < filterButtonRight
                         && mouseY >= buttonY && mouseY < buttonY + SECTION_BUTTON_SIZE;
 
-                if (organizeHovered) return SECTION_BUTTON_ORGANIZE;
-                if (filterHovered) return SECTION_BUTTON_FILTER;
+                if (organizeHovered) return new SectionButtonHit(entry.sectionIndex(), SECTION_BUTTON_ORGANIZE);
+                if (filterHovered) return new SectionButtonHit(entry.sectionIndex(), SECTION_BUTTON_FILTER);
             }
             cursor = bottom + 4;
         }
-        return SECTION_BUTTON_NONE;
+        return null;
     }
+
+    private record SectionButtonHit(int section, int kind) { }
 
     private void handleSectionButtonClick(int button) {
         if (button != 0) return;
@@ -372,9 +385,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         // No additional functionality - just play the click sound
     }
 
-    private void openSectionMenu(int sourceButton, double mouseX, double mouseY) {
+    private void openSectionMenu(int sourceButton, int sourceSection, double mouseX, double mouseY) {
         sectionMenuOpen = true;
         sectionMenuSourceButton = sourceButton;
+        sectionMenuSourceSection = sourceSection;
         sectionMenuX = (int) Math.round(mouseX) + SECTION_MENU_OFFSET_X;
         sectionMenuY = (int) Math.round(mouseY) + SECTION_MENU_OFFSET_Y;
     }
@@ -383,11 +397,99 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         sectionMenuOpen = false;
     }
 
+    private void toggleFilterEditMode(int section) {
+        if (section < 0 || section >= view.sections().size()) return;
+        if (view.sections().get(section).connectionStatus() != ConnectionStatus.AVAILABLE) return;
+        if (filterEditSections.contains(section)) {
+            saveFilter(section);
+        } else {
+            startFilterEdit(section);
+        }
+    }
+
+    private void startFilterEdit(int section) {
+        TerminalViewPayload.Section sectionView = view.sections().get(section);
+        filterEditSections.add(section);
+        List<ItemStack> working = new ArrayList<>(sectionView.filterItems().size());
+        for (ItemStack stack : sectionView.filterItems()) working.add(stack.copy());
+        filterEditItems.put(section, working);
+        filterSectionMode.putIfAbsent(section, sectionView.filterAllow() ? 0 : 1);
+        minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+    }
+
+    private void saveFilter(int section) {
+        TerminalViewPayload.Section sectionView = view.sections().get(section);
+        List<ItemStack> saved = sectionView.filterItems();
+        List<ItemStack> current = filterEditItems.getOrDefault(section, List.of());
+        int savedMode = sectionView.filterAllow() ? 0 : 1;
+        int currentMode = filterSectionMode.getOrDefault(section, savedMode);
+        // Sem alterações nos itens nem na opção do dropdown: apenas desativa, nada a salvar.
+        if (filterListsEqual(current, saved) && currentMode == savedMode) {
+            filterEditSections.remove(section);
+            filterEditItems.remove(section);
+            minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+            return;
+        }
+        PacketDistributor.sendToServer(new TerminalFilterSavePayload(section, currentMode,
+                current.stream().map(ItemStack::copy).filter(stack -> !stack.isEmpty()).toList()));
+        filterEditSections.remove(section);
+        filterEditItems.remove(section);
+        minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+    }
+
+    private static boolean filterListsEqual(List<ItemStack> a, List<ItemStack> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            ItemStack left = a.get(i);
+            ItemStack right = b.get(i);
+            if (left.isEmpty() && right.isEmpty()) continue;
+            if (left.isEmpty() || right.isEmpty()) return false;
+            if (left.getCount() != right.getCount()) return false;
+            if (!InventoryFilterLogic.matchesFilterItem(left, right)) return false;
+        }
+        return true;
+    }
+
+    private void handleFilterSlotClick(int section, int slot, int button) {
+        if (button != 0 && button != 1) return;
+        if (!filterEditSections.contains(section)) return;
+        ItemStack carried = menu.getCarried();
+        List<ItemStack> items = new ArrayList<>(filterEditItems.getOrDefault(section, List.of()));
+        while (items.size() <= slot) items.add(ItemStack.EMPTY);
+        boolean slotHas = !items.get(slot).isEmpty();
+        if (carried.isEmpty()) {
+            if (slotHas) items.set(slot, ItemStack.EMPTY);
+        } else {
+            // Cria uma cópia de uma unidade sem consumir o cursor nem tocar no inventário físico.
+            items.set(slot, InventoryFilterLogic.filterCopy(carried));
+        }
+        filterEditItems.put(section, items);
+    }
+
+    private void clearFilterSlot(int section, int slot) {
+        if (!filterEditSections.contains(section)) return;
+        List<ItemStack> items = filterEditItems.get(section);
+        if (items == null) return;
+        while (items.size() <= slot) items.add(ItemStack.EMPTY);
+        items.set(slot, ItemStack.EMPTY);
+        filterEditItems.put(section, items);
+    }
+
+    private boolean isFilterEditing(int section) {
+        return filterEditSections.contains(section);
+    }
+
+    private ItemStack filterSlotStack(int section, int slot) {
+        List<ItemStack> items = filterEditItems.get(section);
+        if (items == null || slot < 0 || slot >= items.size()) return ItemStack.EMPTY;
+        return items.get(slot);
+    }
+
     private void selectSectionMenuOption(int sourceButton, int option) {
         if (sourceButton == SECTION_BUTTON_ORGANIZE) {
             sectionMenuSelectedOrganize = option;
-        } else {
-            sectionMenuSelectedFilter = option;
+        } else if (sectionMenuSourceSection >= 0) {
+            filterSectionMode.put(sectionMenuSourceSection, option);
         }
         sectionMenuOpen = false;
         minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
@@ -398,7 +500,13 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             // Primeira opção é o padrão quando nada foi selecionado ainda.
             return sectionMenuSelectedOrganize < 0 ? 0 : sectionMenuSelectedOrganize;
         }
-        return sectionMenuSelectedFilter < 0 ? 0 : sectionMenuSelectedFilter;
+        int section = sectionMenuSourceSection;
+        if (section >= 0 && section < view.sections().size()) {
+            Integer edited = filterSectionMode.get(section);
+            if (edited != null) return edited;
+            return view.sections().get(section).filterAllow() ? 0 : 1;
+        }
+        return 0;
     }
 
     private int sectionMenuLineCount(int sourceButton) {
@@ -430,11 +538,18 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         int checkmarkWidth = font.width(Component.literal(MENU_CHECK_MARK));
         int reservedWidth = checkmarkWidth + spaceWidth;
         int selected = sectionMenuSelectedFor(sourceButton);
-        String prefix = option == selected
+        boolean isSelected = option == selected;
+        // Checkmark em negrito apenas na opção selecionada.
+        String prefix = isSelected
                 ? MENU_CHECK_MARK + " "
                 : " ".repeat(Math.max(1, (int) Math.ceil((double) reservedWidth / spaceWidth)));
-        MutableComponent lineComponent = Component.literal(prefix).append(text);
-        return lineComponent.withStyle(Style.EMPTY.withColor(MENU_OPTION_COLOR));
+        MutableComponent prefixComponent = Component.literal(prefix);
+        if (isSelected) {
+            prefixComponent = prefixComponent.withStyle(Style.EMPTY.withBold(true));
+        }
+        MutableComponent lineComponent = prefixComponent.append(text);
+        int color = isSelected ? MENU_OPTION_COLOR : MENU_OPTION_COLOR_UNSELECTED;
+        return lineComponent.withStyle(Style.EMPTY.withColor(color));
     }
 
     private String sectionMenuTranslationKey(int sourceButton, int option) {
@@ -474,7 +589,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 int top = sectionMenuY + line * lineHeight;
                 int right = left + font.width(split.get(0));
                 int bottom = top + lineHeight;
-                if (mouseX >= left && mouseX < right && mouseY >= top && mouseY < bottom) {
+                // O último pixel vertical de cada linha ainda pertence a essa linha,
+                // então o hit-test é inclusivo no eixo Y (mouseY <= bottom).
+                if (mouseX >= left && mouseX < right && mouseY >= top && mouseY <= bottom) {
                     return line - 1;
                 }
             }
@@ -596,7 +713,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         List<TerminalViewPayload.Section> sections = new ArrayList<>(view.sections());
         TerminalViewPayload.Section current = sections.get(sectionIndex);
         sections.set(sectionIndex, new TerminalViewPayload.Section(payload.label(), current.coordinate(),
-                payload.status(), current.slotCount()));
+                payload.status(), current.slotCount(), current.filterItems(), current.filterMode()));
         List<TerminalViewPayload.VisibleSlot> visibleSlots = new ArrayList<>();
         for (TerminalViewPayload.VisibleSlot slot : view.visibleSlots()) {
             if (slot.section() != sectionIndex) visibleSlots.add(slot);
@@ -694,7 +811,13 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             boolean unavailable = section.connectionStatus() != ConnectionStatus.AVAILABLE;
             drawDottedFrame(graphics, area.left(), top, area.right(), bottom,
                     unavailable ? 0xFFFF9B45 : 0xFFD0D0D0);
-            if (editingSection == index) {
+            boolean filterEditing = isFilterEditing(index);
+            if (filterEditing) {
+                // O título fica travado como "Editor de Filtro de Itens" enquanto edita o filtro.
+                drawClippedTitle(graphics,
+                        Component.translatable("gui.simplestoragemanager.storage_manager_gui.filter_editor_title"),
+                        leftPos + area.left() + 4, topPos + top + 2, 0.0);
+            } else if (editingSection == index) {
                 updateTitleEditBoxRect(index);
             } else {
                 String titleText = section.label().getString();
@@ -710,13 +833,18 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 int x = area.left() + (slot % 9) * SLOT_SIZE;
                 int y = slotY + (slot / 9) * SLOT_SIZE;
                 graphics.blit(SLOT_TEXTURE, leftPos + x, topPos + y, 0, 0, 18, 18, 18, 18);
-                ItemStack stack = visualRemotePreviewItems.getOrDefault(key(index, slot),
-                        remoteItems.getOrDefault(key(index, slot), ItemStack.EMPTY));
+                ItemStack stack;
+                if (filterEditing) {
+                    stack = filterSlotStack(index, slot);
+                } else {
+                    stack = visualRemotePreviewItems.getOrDefault(key(index, slot),
+                            remoteItems.getOrDefault(key(index, slot), ItemStack.EMPTY));
+                }
                 if (!stack.isEmpty()) {
-                    graphics.renderItem(stack, leftPos + x + TerminalScreenLayout.ITEM_OFFSET,
-                            topPos + y + TerminalScreenLayout.ITEM_OFFSET);
-                    renderItemDecorations(graphics, stack, leftPos + x + TerminalScreenLayout.ITEM_OFFSET,
-                            topPos + y + TerminalScreenLayout.ITEM_OFFSET);
+                    int itemX = leftPos + x + TerminalScreenLayout.ITEM_OFFSET;
+                    int itemY = topPos + y + TerminalScreenLayout.ITEM_OFFSET;
+                    graphics.renderItem(stack, itemX, itemY);
+                    renderItemDecorations(graphics, stack, itemX, itemY);
                 }
                 if (isInside(area, mouseX, mouseY)
                         && mouseX >= leftPos + x && mouseX < leftPos + x + 18
@@ -944,9 +1072,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                     Component.translatable("gui.simplestoragemanager.storage_manager_gui.organize_inventory"),
                     mouseX, mouseY);
         } else if (!sectionMenuOpen && hoveredFilterSection >= 0 && view.advanced()) {
-            graphics.renderTooltip(font,
-                    Component.translatable("gui.simplestoragemanager.storage_manager_gui.open_inventory_filter"),
-                    mouseX, mouseY);
+            if (isFilterEditing(hoveredFilterSection)) {
+                graphics.renderTooltip(font,
+                        Component.translatable("gui.simplestoragemanager.storage_manager_gui.close_inventory_filter"),
+                        mouseX, mouseY);
+            } else {
+                graphics.renderTooltip(font,
+                        Component.translatable("gui.simplestoragemanager.storage_manager_gui.open_inventory_filter"),
+                        mouseX, mouseY);
+            }
         } else if (hoveredNoticeDismiss) {
             graphics.renderTooltip(font, Component.translatable("screen.simplestoragemanager.dismiss_notice"),
                     mouseX, mouseY);
@@ -1005,10 +1139,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             PacketDistributor.sendToServer(new TerminalClearCraftingPayload());
             return true;
         }
-        int sectionButtonKind = sectionButtonAt(mouseX, mouseY);
-        if (sectionButtonKind != SECTION_BUTTON_NONE) {
+        SectionButtonHit sectionButton = sectionButtonHit(mouseX, mouseY);
+        if (sectionButton != null) {
+            int sourceSection = sectionButton.section();
             if (button == 1) {
-                openSectionMenu(sectionButtonKind, mouseX, mouseY);
+                // Clique direito abre o menu dropdown (Tipo de Filtro ou Organizar por).
+                openSectionMenu(sectionButton.kind(), sourceSection, mouseX, mouseY);
+            } else if (sectionButton.kind() == SECTION_BUTTON_FILTER) {
+                // Clique esquerdo no botão de filtro alterna o modo de edição daquele inventário.
+                toggleFilterEditMode(sourceSection);
             }
             handleSectionButtonClick(button);
             return true;
@@ -1020,6 +1159,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         }
         if (clickNotice(mouseX, mouseY)) return true;
         RemoteHit remoteHit = remoteHitAt(mouseX, mouseY);
+        if (remoteHit != null && isFilterEditing(remoteHit.section())) {
+            // Enquanto edita o filtro, cliques na área da seção afetam apenas os slots do filtro.
+            handleFilterSlotClick(remoteHit.section(), remoteHit.slot(), button);
+            return true;
+        }
         if (remoteHit != null) {
             if (!view.canMutateInventories()) return true;
             if (isCreativePickButton(button)) {
@@ -1705,6 +1849,13 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (!filterEditSections.isEmpty() && button == 0 && menu.getCarried().isEmpty()) {
+            RemoteHit hit = remoteHitAt(mouseX, mouseY);
+            if (hit != null && isFilterEditing(hit.section())) {
+                clearFilterSlot(hit.section(), hit.slot());
+                return true;
+            }
+        }
         if (itemDragButton >= 0 && button == itemDragButton) {
             if (!itemDragMoved && !itemDragShift && !itemDragCreative && !menu.getCarried().isEmpty()) {
                 // A manual drag without shift may only start inside the origin inventory of the

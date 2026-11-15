@@ -54,6 +54,8 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
             ByteBufCodecs.stringUtf8(128), Section::coordinate,
             ByteBufCodecs.VAR_INT, Section::status,
             ByteBufCodecs.VAR_INT, Section::slotCount,
+            ByteBufCodecs.<RegistryFriendlyByteBuf, ItemStack>list().apply(STACK_CODEC), Section::filterItems,
+            ByteBufCodecs.VAR_INT, Section::filterMode,
             Section::new);
     private static final StreamCodec<RegistryFriendlyByteBuf, UUID> UUID_CODEC = StreamCodec.composite(
             ByteBufCodecs.VAR_LONG, UUID::getMostSignificantBits,
@@ -190,10 +192,20 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
         SimplestoragemanagerMod.addNetworkMessage(TYPE, STREAM_CODEC, TerminalViewPayload::handle);
     }
 
-    public record Section(Component label, String coordinate, int status, int slotCount) {
+    public record Section(Component label, String coordinate, int status, int slotCount,
+                          List<ItemStack> filterItems, int filterMode) {
+        public Section {
+            filterItems = List.copyOf(filterItems.stream().map(ItemStack::copy).toList());
+            filterMode = Math.max(0, Math.min(1, filterMode));
+        }
+
         public ConnectionStatus connectionStatus() {
             ConnectionStatus[] values = ConnectionStatus.values();
             return status >= 0 && status < values.length ? values[status] : ConnectionStatus.BLOCK_REMOVED;
+        }
+
+        public boolean filterAllow() {
+            return filterMode == 0;
         }
     }
 
