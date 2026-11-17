@@ -15,4 +15,13 @@ public final class ShiftDragInsertionRules {
         return safeSlotLimit > TerminalInsertionRules.VANILLA_MAX_SLOT_SIZE && safeItemLimit > 1
                 ? safeSlotLimit : Math.min(safeSlotLimit, safeItemLimit);
     }
+
+    /**
+     * Capacidade de inserção efetiva de um destino: um filtro que nega o item recebido remove a
+     * capacidade disponível, de modo que o planejador trate o destino como sem capacidade e continue
+     * a busca no próximo inventário conectado que aceite a pilha.
+     */
+    public static int effectiveCapacity(int capacity, boolean filterAllowsInsertion) {
+        return filterAllowsInsertion ? Math.max(0, capacity) : 0;
+    }
 }

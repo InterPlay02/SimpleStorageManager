@@ -16,6 +16,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.interplay.simplestoragemanager.data.TerminalConnection;
 import net.interplay.simplestoragemanager.logic.InventoryFilterLogic;
+import net.interplay.simplestoragemanager.logic.InventoryOrganizerLogic;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -38,6 +39,7 @@ public final class TerminalSavedData extends SavedData {
     private final Set<UUID> lockedTerminals = new HashSet<>();
     private final Map<UUID, String> customNames = new HashMap<>();
     private final Map<UUID, InventoryFilterLogic.FilterConfig> filterConfigs = new HashMap<>();
+    private final Map<UUID, InventoryOrganizerLogic.OrganizeConfig> organizeConfigs = new HashMap<>();
 
     public static TerminalSavedData get(ServerLevel level) {
         ServerLevel overworld = level.getServer().getLevel(Level.OVERWORLD);
@@ -73,12 +75,18 @@ public final class TerminalSavedData extends SavedData {
     }
 
     private void pruneFilterConfigs(java.util.Set<UUID> activeConnectionIds) {
-        // Filter configs are keyed by connection UUID globally, so prune by active ids across all
-        // terminals to avoid keeping configs for connections that no longer exist.
+        // Filter and organize configs are keyed by connection UUID globally, so prune by active ids
+        // across all terminals to avoid keeping configs for connections that no longer exist.
         boolean changed = false;
         for (var connectionId : new java.util.ArrayList<>(filterConfigs.keySet())) {
             if (!activeConnectionIds.contains(connectionId)) {
                 filterConfigs.remove(connectionId);
+                changed = true;
+            }
+        }
+        for (var connectionId : new java.util.ArrayList<>(organizeConfigs.keySet())) {
+            if (!activeConnectionIds.contains(connectionId)) {
+                organizeConfigs.remove(connectionId);
                 changed = true;
             }
         }
@@ -247,6 +255,23 @@ public final class TerminalSavedData extends SavedData {
         }
     }
 
+    public synchronized InventoryOrganizerLogic.OrganizeConfig getOrganizeConfig(UUID connectionId) {
+        return organizeConfigs.getOrDefault(connectionId,
+                InventoryOrganizerLogic.defaultConfig(InventoryOrganizerLogic.OrganizeOption.NAME));
+    }
+
+    public synchronized void putOrganizeConfig(UUID connectionId,
+                                               InventoryOrganizerLogic.OrganizeConfig config) {
+        organizeConfigs.put(connectionId, config);
+        setDirty();
+    }
+
+    public synchronized void removeOrganizeConfig(UUID connectionId) {
+        if (organizeConfigs.remove(connectionId) != null) {
+            setDirty();
+        }
+    }
+
     public static TerminalSavedData load(CompoundTag tag, HolderLookup.Provider provider) {
         TerminalSavedData data = new TerminalSavedData();
         ListTag terminalList = tag.getList("Terminals", Tag.TAG_COMPOUND);
@@ -355,6 +380,25 @@ public final class TerminalSavedData extends SavedData {
                         InventoryFilterLogic.fromTag(provider, filterConfigTag));
             }
         }
+        ListTag organizeConfigList = tag.getList("OrganizeConfigs", Tag.TAG_COMPOUND);
+        for (int i = 0; i < organizeConfigList.size(); i++) {
+            CompoundTag organizeConfigTag = organizeConfigList.getCompound(i);
+            UUID connectionId = organizeConfigTag.hasUUID("ConnectionId")
+                    ? organizeConfigTag.getUUID("ConnectionId") : null;
+            if (connectionId != null && organizeConfigTag.contains("Option")) {
+                int option = organizeConfigTag.getInt("Option");
+                boolean ascending = organizeConfigTag.getBoolean("Ascending");
+                boolean organized = organizeConfigTag.getBoolean("Organized");
+                InventoryOrganizerLogic.OrganizeOption opt;
+                try {
+                    opt = InventoryOrganizerLogic.OrganizeOption.values()[option];
+                } catch (Exception ignored) {
+                    opt = InventoryOrganizerLogic.OrganizeOption.NAME;
+                }
+                data.organizeConfigs.put(connectionId,
+                        new InventoryOrganizerLogic.OrganizeConfig(opt, ascending, organized));
+            }
+        }
         return data;
     }
 
@@ -433,6 +477,17 @@ public final class TerminalSavedData extends SavedData {
             filterConfigList.add(filterConfigTag);
         }
         tag.put("FilterConfigs", filterConfigList);
+
+        ListTag organizeConfigList = new ListTag();
+        for (Map.Entry<UUID, InventoryOrganizerLogic.OrganizeConfig> entry : organizeConfigs.entrySet()) {
+            CompoundTag organizeConfigTag = new CompoundTag();
+            organizeConfigTag.putUUID("ConnectionId", entry.getKey());
+            organizeConfigTag.putInt("Option", entry.getValue().option().ordinal());
+            organizeConfigTag.putBoolean("Ascending", entry.getValue().ascending());
+            organizeConfigTag.putBoolean("Organized", entry.getValue().organized());
+            organizeConfigList.add(organizeConfigTag);
+        }
+        tag.put("OrganizeConfigs", organizeConfigList);
 
         tag.put("Terminals", terminalList);
         return tag;

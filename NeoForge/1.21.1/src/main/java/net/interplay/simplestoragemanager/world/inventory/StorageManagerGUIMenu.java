@@ -38,6 +38,7 @@ import net.interplay.simplestoragemanager.data.TerminalConnection;
 import net.interplay.simplestoragemanager.data.TerminalDataComponents;
 import net.interplay.simplestoragemanager.item.inventory.StorageManagerInventoryCapability;
 import net.interplay.simplestoragemanager.logic.InventoryFilterLogic;
+import net.interplay.simplestoragemanager.logic.InventoryOrganizerLogic;
 import net.interplay.simplestoragemanager.logic.StorageSearch;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
 import net.interplay.simplestoragemanager.logic.ShiftDragInsertionRules;
@@ -1189,7 +1190,12 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             for (int type = 0; type < itemTypes.size(); type++) {
                 ItemStack incoming = itemTypes.get(type);
                 if (!existing.isEmpty() && !ItemStack.isSameItemSameComponents(existing, incoming)) continue;
-                maxCounts.put(type, simulatedShiftDragTotalLimit(target, existing, incoming));
+                // O filtro do inventário destino nega o item recebido: a oferta fica sem capacidade, o
+                // planejador segue para o próximo inventário conectado e só devolve a pilha ao player
+                // quando nenhum slot válido e aceito existir.
+                maxCounts.put(type, ShiftDragInsertionRules.effectiveCapacity(
+                        simulatedShiftDragTotalLimit(target, existing, incoming),
+                        filterAllowsInsertion(target.adapter().connection(), incoming)));
             }
             plannerDestinations.add(new ShiftDragPlanner.Destination(target.section(), target.slot(),
                     existingType, existing.isEmpty() ? 0 : existing.getCount(),
@@ -2140,6 +2146,10 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 int slot = destination.slot();
                 ItemStack existing = handler.getStackInSlot(slot);
                 if (!acceptsInsertionSlot(existing, stack, pass) || !handler.isItemValid(slot, stack)) continue;
+                // Um filtro que nega o item remove o destino da busca: a procura segue para o próximo
+                // inventário conectado com slot válido, mantendo a pilha no player apenas quando nenhum
+                // slot aceito existir.
+                if (!filterAllowsInsertion(destination.connection(), stack)) continue;
                 inserted += insertRemoteSlot(handler, slot, stack, requested - inserted,
                         destination.connection());
             }
@@ -2206,6 +2216,71 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
                 new InventoryFilterLogic.FilterConfig(items, mode));
         refreshServerView();
         broadcastFilterToTerminalViewers(player, connectionId);
+    }
+
+    public void handleOrganize(ServerPlayer player, int section, int option) {
+        if (world.isClientSide || !stillValid(player)) return;
+        if (!canUseConnectedInventories(player, true)) return;
+        if (section < 0 || section >= serverSections.size()) return;
+        ServerSection serverSection = serverSections.get(section);
+        TerminalConnection connection = serverSection.connection();
+        if (connection == null) return;
+        InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
+        if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) return;
+        IItemHandler handler = resolution.adapter().handler();
+
+        UUID connectionId = connection.connectionId();
+        InventoryOrganizerLogic.OrganizeConfig config = TerminalSavedData
+                .get(player.serverLevel()).getOrganizeConfig(connectionId);
+        // Update the selected option to whatever the client currently has chosen in the dropdown.
+        InventoryOrganizerLogic.OrganizeOption selected;
+        try {
+            selected = InventoryOrganizerLogic.OrganizeOption.values()[option];
+        } catch (Exception ignored) {
+            selected = InventoryOrganizerLogic.OrganizeOption.NAME;
+        }
+        config = new InventoryOrganizerLogic.OrganizeConfig(selected, config.ascending(), config.organized());
+
+        boolean changed;
+        if (!config.organized()) {
+            // First time for this inventory: use the default direction for the selected mode.
+            InventoryOrganizerLogic.OrganizeConfig defaultConfig = InventoryOrganizerLogic
+                    .defaultConfig(config.option());
+            changed = InventoryOrganizerLogic.organize(handler, defaultConfig);
+            config = new InventoryOrganizerLogic.OrganizeConfig(config.option(),
+                    defaultConfig.ascending(), true);
+        } else {
+            // Subsequent clicks: alternate the direction.
+            InventoryOrganizerLogic.OrganizeConfig toggled = InventoryOrganizerLogic
+                    .toggleDirection(config);
+            changed = InventoryOrganizerLogic.organize(handler, toggled);
+            config = toggled;
+        }
+
+        // Always persist the updated config (organized flag and/or direction) so the next click
+        // continues the alternation from the current state, even when nothing physically moved.
+        TerminalSavedData.get(player.serverLevel()).putOrganizeConfig(connectionId, config);
+        if (changed) {
+            refreshServerView();
+            broadcastOrganizeToTerminalViewers(player, connectionId);
+        }
+    }
+
+    private void broadcastOrganizeToTerminalViewers(ServerPlayer requester, UUID connectionId) {
+        UUID id = terminalId;
+        if (id == null) return;
+        ServerLevel level = requester.serverLevel();
+        List<ServerPlayer> players = level.getServer().getPlayerList().getPlayers();
+        List<ServerPlayer> viewers = new ArrayList<>();
+        for (ServerPlayer candidate : players) {
+            if (candidate.containerMenu instanceof StorageManagerGUIMenu menu
+                    && id.equals(menu.terminalId())) {
+                viewers.add(candidate);
+            }
+        }
+        for (ServerPlayer viewer : viewers) {
+            sendView(viewer, false);
+        }
     }
 
     private void broadcastFilterToTerminalViewers(ServerPlayer requester, UUID connectionId) {

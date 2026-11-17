@@ -30,6 +30,7 @@ import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewPayloa
 import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewRequestPayload;
 import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
 import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
+import net.interplay.simplestoragemanager.network.TerminalOrganizePayload;
 import net.interplay.simplestoragemanager.network.TerminalRenamePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
@@ -124,7 +125,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private boolean sectionMenuOpen;
     private int sectionMenuSourceButton = SECTION_BUTTON_NONE;
     private int sectionMenuSourceSection = -1;
-    private int sectionMenuSelectedOrganize = -1;
+    /** Selected organize option per section (section index -> option index). */
+    private final Map<Integer, Integer> sectionSelectedOrganize = new HashMap<>();
     /** Sections currently in filter-edit mode (many may be edited at the same time). */
     private final Set<Integer> filterEditSections = new HashSet<>();
     /** Filter entries being edited for each section, transient and client side only. */
@@ -487,7 +489,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
 
     private void selectSectionMenuOption(int sourceButton, int option) {
         if (sourceButton == SECTION_BUTTON_ORGANIZE) {
-            sectionMenuSelectedOrganize = option;
+            sectionSelectedOrganize.put(sectionMenuSourceSection, option);
         } else if (sectionMenuSourceSection >= 0) {
             filterSectionMode.put(sectionMenuSourceSection, option);
         }
@@ -495,10 +497,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
     }
 
+    private int sectionMenuSelectedOrganizeFor(int section) {
+        Integer selected = sectionSelectedOrganize.get(section);
+        return selected == null ? 0 : selected;
+    }
+
     private int sectionMenuSelectedFor(int sourceButton) {
         if (sourceButton == SECTION_BUTTON_ORGANIZE) {
             // Primeira opção é o padrão quando nada foi selecionado ainda.
-            return sectionMenuSelectedOrganize < 0 ? 0 : sectionMenuSelectedOrganize;
+            return sectionMenuSelectedOrganizeFor(sectionMenuSourceSection);
         }
         int section = sectionMenuSourceSection;
         if (section >= 0 && section < view.sections().size()) {
@@ -1148,6 +1155,12 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             } else if (sectionButton.kind() == SECTION_BUTTON_FILTER) {
                 // Clique esquerdo no botão de filtro alterna o modo de edição daquele inventário.
                 toggleFilterEditMode(sourceSection);
+            } else if (sectionButton.kind() == SECTION_BUTTON_ORGANIZE) {
+                // Clique esquerdo no botão de organização executa a auto-organização naquele inventário,
+                // usando a opção atualmente selecionada no menu dropdown.
+                minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
+                int option = sectionMenuSelectedOrganizeFor(sourceSection);
+                PacketDistributor.sendToServer(new TerminalOrganizePayload(sourceSection, option));
             }
             handleSectionButtonClick(button);
             return true;
