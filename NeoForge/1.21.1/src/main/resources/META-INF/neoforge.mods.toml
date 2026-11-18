@@ -27,7 +27,14 @@ authors="InterPlay"
     ordering="AFTER"
     side="BOTH"
 
-
+# EMI (Every Mod Is Included) is an optional soft dependency: the mod works without it.
+# The recipe transfer integration is only loaded when EMI is actually installed.
+[[dependencies.simplestoragemanager]]
+    modId="emi"
+    type="optional"
+    versionRange="[1.1.24+1.21.1,)"
+    ordering="AFTER"
+    side="CLIENT"
 
 
 # Start of user code block dependencies configuration

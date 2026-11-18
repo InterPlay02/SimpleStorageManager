@@ -31,6 +31,7 @@ import net.interplay.simplestoragemanager.init.SimplestoragemanagerModMenus;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModItems;
 import net.interplay.simplestoragemanager.data.TerminalDataComponents;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModRecipes;
+import net.interplay.simplestoragemanager.client.gui.StorageManagerGUIScreen;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
 
 import java.util.concurrent.ConcurrentLinkedQueue;

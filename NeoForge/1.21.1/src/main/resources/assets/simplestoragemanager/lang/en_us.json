@@ -51,5 +51,6 @@
   "gui.simplestoragemanager.storage_manager_gui.organize_by_name": "Name",
   "gui.simplestoragemanager.storage_manager_gui.organize_by_quantity": "Quantity",
   "gui.simplestoragemanager.storage_manager_gui.organize_by_item_type": "Item Type",
-  "gui.simplestoragemanager.storage_manager_gui.organize_by_mod": "Mod"
+  "gui.simplestoragemanager.storage_manager_gui.organize_by_mod": "Mod",
+  "gui.simplestoragemanager.storage_manager_gui.cannot_view_recipe_remote": "Cannot view recipe of items inside connected inventories."
 }

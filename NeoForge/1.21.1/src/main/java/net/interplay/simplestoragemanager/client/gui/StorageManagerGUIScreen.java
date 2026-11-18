@@ -1988,6 +1988,49 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 && mouseY >= topPos + rect.top() && mouseY < topPos + rect.bottom() + 1;
     }
 
+    /**
+     * Returns the menu slot at the given screen-relative coordinates, checking only the crafting
+     * grid and the player's personal inventory (main + hotbar). Remote inventory sections are not
+     * real menu slots and are intentionally excluded. Used by EMI's stack provider so that
+     * shortcut keys (R/U) can resolve the hovered item without requiring a prior click.
+     *
+     * @param x screen-relative X coordinate (mouseX - guiLeft)
+     * @param y screen-relative Y coordinate (mouseY - guiTop)
+     * @return the slot at the position, or null if none matches
+     */
+    public Slot getSlotAtRelative(double x, double y) {
+        // Crafting grid: 3x3
+        TerminalScreenLayout.Point craftOrigin = variant.craftOrigin();
+        if (x >= craftOrigin.x() && x < craftOrigin.x() + 54
+                && y >= craftOrigin.y() && y < craftOrigin.y() + 54) {
+            int column = (int) ((x - craftOrigin.x()) / 18);
+            int row = (int) ((y - craftOrigin.y()) / 18);
+            if (column >= 0 && column < 3 && row >= 0 && row < 3) {
+                return menu.slots.get(menu.craftingGridStart + row * 3 + column);
+            }
+        }
+        // Player main inventory: 3 rows x 9 columns
+        TerminalScreenLayout.Point invOrigin = variant.inventoryOrigin();
+        if (x >= invOrigin.x() && x < invOrigin.x() + 162
+                && y >= invOrigin.y() && y < invOrigin.y() + 54) {
+            int column = (int) ((x - invOrigin.x()) / 18);
+            int row = (int) ((y - invOrigin.y()) / 18);
+            if (column >= 0 && column < 9 && row >= 0 && row < 3) {
+                return menu.slots.get(menu.mainInventoryStart + row * 9 + column);
+            }
+        }
+        // Hotbar: 1 row x 9 columns
+        TerminalScreenLayout.Point hotbarOrigin = variant.hotbarOrigin();
+        if (x >= hotbarOrigin.x() && x < hotbarOrigin.x() + 162
+                && y >= hotbarOrigin.y() && y < hotbarOrigin.y() + 18) {
+            int column = (int) ((x - hotbarOrigin.x()) / 18);
+            if (column >= 0 && column < 9) {
+                return menu.slots.get(menu.hotbarStart + column);
+            }
+        }
+        return null;
+    }
+
     private boolean pointHit(TerminalScreenLayout.Point point, double x, double y) {
         return x >= point.x() && x < point.x() + 18 && y >= point.y() && y < point.y() + 18;
     }

@@ -51,5 +51,6 @@
   "gui.simplestoragemanager.storage_manager_gui.organize_by_name": "Nome",
   "gui.simplestoragemanager.storage_manager_gui.organize_by_quantity": "Quantidade",
   "gui.simplestoragemanager.storage_manager_gui.organize_by_item_type": "Tipo de Item",
-  "gui.simplestoragemanager.storage_manager_gui.organize_by_mod": "Mod"
+  "gui.simplestoragemanager.storage_manager_gui.organize_by_mod": "Mod",
+  "gui.simplestoragemanager.storage_manager_gui.cannot_view_recipe_remote": "Não é possível ver a receita de itens dentro de inventários conectados."
 }
