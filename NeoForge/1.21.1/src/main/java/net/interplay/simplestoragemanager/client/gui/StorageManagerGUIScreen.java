@@ -34,6 +34,7 @@ import net.interplay.simplestoragemanager.network.TerminalOrganizePayload;
 import net.interplay.simplestoragemanager.network.TerminalRenamePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
+import net.interplay.simplestoragemanager.config.SimplestoragemanagerConfig;
 import net.interplay.simplestoragemanager.logic.InventoryFilterLogic;
 import net.interplay.simplestoragemanager.logic.TerminalScaleChoice;
 import net.interplay.simplestoragemanager.logic.TerminalInsertionRules;
@@ -1934,7 +1935,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (editingSection >= 0) return true;
         if (isInside(variant.contentArea(), mouseX, mouseY) || isInside(variant.scrollTrack(), mouseX, mouseY)) {
-            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * 27);
+            int speed = SimplestoragemanagerConfig.SCROLL_SPEED.get();
+            requestView(view.scrollOffset() - (int) Math.signum(scrollY) * speed);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);

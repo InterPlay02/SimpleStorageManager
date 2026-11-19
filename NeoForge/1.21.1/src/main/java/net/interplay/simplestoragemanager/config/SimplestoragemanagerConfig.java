@@ -9,6 +9,10 @@ public final class SimplestoragemanagerConfig {
             BUILDER.comment("Allow each connected inventory to be linked to only one terminal.")
                     .define("protectConnectedInventories", false);
 
+    public static final ModConfigSpec.IntValue SCROLL_SPEED =
+            BUILDER.comment("Scroll speed of the terminal main area scrollbar (pixels per mouse wheel tick).")
+                    .defineInRange("scrollSpeed", 27, 1, 500);
+
     public static final ModConfigSpec SERVER_SPEC = BUILDER.build();
 
     private SimplestoragemanagerConfig() {

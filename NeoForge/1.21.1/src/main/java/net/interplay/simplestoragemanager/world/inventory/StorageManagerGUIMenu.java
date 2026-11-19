@@ -335,6 +335,21 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
             sections.add(new ServerSection(null, ConnectionStatus.AVAILABLE,
                     Component.translatable("screen.simplestoragemanager.search_results"),
                     results.size(), List.of(), List.of(), results));
+
+            // Abaixo dos resultados de itens, aparecem as seções inteiras cujo nome
+            // (customizado ou nome do bloco) corresponde à pesquisa (parcial, sem diferenciar
+            // maiúsculas de minúsculas). Cada seção listada mostra todo o seu inventário.
+            for (TerminalConnection connection : connections) {
+                InventoryAdapter.Resolution resolution = resolve(connection);
+                statuses.put(connection, resolution.status());
+                if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null) continue;
+                Component fallback = resolution.adapter().displayName();
+                Component label = effectiveLabel(connection, fallback);
+                if (!StorageSearch.matches(label.getString(), search)) continue;
+                sections.add(new ServerSection(connection, resolution.status(), label,
+                        resolution.adapter().getSlots(),
+                        snapshotSlots(resolution.adapter()), snapshotSlotLimits(resolution.adapter()), List.of()));
+            }
         }
         serverSections = List.copyOf(sections);
         connectionStatuses = new HashMap<>(statuses);
