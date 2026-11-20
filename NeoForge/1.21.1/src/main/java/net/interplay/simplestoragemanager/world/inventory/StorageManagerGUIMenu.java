@@ -84,6 +84,15 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     private static final int SLOT_SIZE = 18;
     private static final int PLAYER_DESTINATION_SECTION = -1;
 
+    /** Index of the first of the 9 terminal crafting-grid slots. */
+    public static final int CRAFTING_GRID_START = 45;
+    /** Number of terminal crafting-grid slots. */
+    public static final int CRAFTING_GRID_COUNT = 9;
+    /** Index of the first player main-inventory slot (main inventory + hotbar follow contiguously). */
+    public static final int PLAYER_INVENTORY_START = 8;
+    /** Number of player inventory slots tracked for JEI (27 main + 9 hotbar). */
+    public static final int PLAYER_INVENTORY_COUNT = 36;
+
     public final Map<String, Object> menuState = new HashMap<>();
     public final Level world;
     public final Player entity;

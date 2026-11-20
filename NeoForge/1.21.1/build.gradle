@@ -57,6 +57,10 @@ repositories {
         name = 'TerraformersMC'
         url = 'https://maven.terraformersmc.com/releases/'
     }
+    maven {
+        name = 'Jared\'s maven'
+        url = 'https://maven.blamejared.com/'
+    }
 }
 
 dependencies {
@@ -65,7 +69,7 @@ dependencies {
     compileOnly "maven.modrinth:sophisticated-backpacks:1.21.1-${sophisticated_backpacks_version}"
     compileOnly "maven.modrinth:storagedrawers:${storagedrawers_version}"
     compileOnly "dev.emi:emi-neoforge:${emi_version}:api"
-    runtimeOnly "dev.emi:emi-neoforge:${emi_version}"
+    compileOnly "mezz.jei:jei-1.21.1-neoforge:${jei_version}"
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'

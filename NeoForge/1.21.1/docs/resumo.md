@@ -71,12 +71,21 @@ Versão do Java: 21
 
 ## Compatibilidade com o EMI (Every Mod Is Included)
 
-- Adicionada integração opcional (soft dependency) com o EMI `1.1.24+1.21.1`: `compileOnly` da API e `runtimeOnly` do mod; o Simple Storage Manager funciona sem o EMI instalado.
+- Adicionada integração opcional (soft dependency) com o EMI `1.1.xx+1.21.1` (qualquer versão >= `1.1.24+1.21.1`): `compileOnly` da API do mod; o Simple Storage Manager funciona sem o EMI instalado.
 - `EmiTerminalIntegration` (`@EmiEntrypoint`, `EmiPlugin`) registra a tela do terminal no EMI:
   - Bounds da tela (`StorageManagerGUIScreen`).
   - Handler de receitas (`TerminalEmiRecipeHandler`, `StandardRecipeHandler`) para o menu do terminal: 9 slots da grade de crafting como fontes de entrada e slots de crafting, mais o inventário do jogador (principal + hotbar) como fontes adicionais; o slot de resultado é a saída. Suporta apenas receitas da categoria CRAFTING com árvore de receitas.
   - Provedor de stack (`TerminalStackProvider`) para que as teclas de atalho do EMI (R = receitas, U = usos) funcionem ao passar o mouse sobre itens na tela do terminal.
 - Dependência opcional declarada em `neoforge.mods.toml` (`modId="emi"`, `type="optional"`, lado CLIENT). A transferência de receitas só é carregada quando o EMI está instalado; o servidor continua sendo a autoridade para a transferência real de itens.
+
+## Compatibilidade com o JEI (Just Enough Items)
+
+- Adicionada integração opcional com o JEI `19.71.x.xxx` (qualquer versão >= `19.71.0.470`): `compileOnly` da API do mod; o Simple Storage Manager funciona sem o JEI instalado.
+- `JeiTerminalIntegration` (`@JeiPlugin`, `IModPlugin`) registra o terminal no JEI:
+  - O terminal como catalisador de receitas de crafting vanilla (`RecipeTypes.CRAFTING`).
+  - Handler de transferência de receitas: os 9 slots da grade de crafting como slots de receita (destino do botão `[+] mover itens para a Crafting Grid`) e os 36 slots do inventário do player (principal + hotbar) como fontes de ingredientes, de modo que o JEI reconheça os itens do player com o terminal aberto.
+  - Handler de GUI que expõe o item sob o mouse para que as teclas de atalho do JEI (R = receitas, U = usos e favoritos) funcionem ao passar o mouse sobre itens no inventário do player ou na Crafting Grid da tela do terminal.
+- Dependência declarada em `build.gradle` como `compileOnly "mezz.jei:jei-1.21.1-neoforge:[19.71.0.470,)"`; nenhum código do JEI é empacotado no JAR.
 
 ## Propriedade, upgrades e proteção de inventários
 
