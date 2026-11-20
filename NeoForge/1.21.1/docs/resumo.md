@@ -94,6 +94,13 @@ Versão do Java: 21
 - Um `FocusedStackProvider` expõe o item sob o mouse (inventário, hotbar, grade e slot de resultado) para as teclas de atalho do REI (receitas/usos/favoritos). Ele apenas informa o stack ao REI: não intercepta cliques, então a extração do resultado continua normal.
 - A transferência continua sendo validada e executada no servidor pelo mecanismo padrão do REI; nenhuma área clicável extra foi adicionada à GUI.
 
+## Prioridade entre visualizadores de receitas (EMI / REI / JEI)
+
+- Regra aplicada somente enquanto a GUI do terminal está aberta: **EMI > REI > JEI**. Se apenas um dos três estiver instalado, nada muda; com dois ou mais, os de menor prioridade ficam escondidos (barra de busca, itens, favoritos e atalhos) e são restaurados ao fechar o terminal. Fora do terminal, cada mod mantém seu comportamento normal.
+- O estado do visualizador vencedor nunca é sobrescrito: se o jogador tiver desligado a overlay dele (por exemplo, a do EMI), nenhuma overlay aparece no terminal — igual a quando só ele está instalado.
+- `RecipeViewerPriority` (`@EventBusSubscriber`, lado CLIENT) verifica quais mods estão instalados com `ModList.isLoaded` e usa o mesmo mecanismo das teclas de mostrar/esconder overlay de cada mod (REI via `ConfigObject.setOverlayVisible`, JEI via `IClientToggleState.setOverlayEnabled`; o EMI nunca é escondido). Todo acesso é feito por reflexão para que nenhum desses mods seja obrigatório — eles continuam sendo `compileOnly`.
+- As teclas de receita/usos/favorito dos viewers suprimidos não são bloqueadas globalmente (isso também quebraria os atalhos do vencedor e os cliques na GUI); apenas a tecla que religaria a overlay suprimida é cancelada.
+
 ## Propriedade, upgrades e proteção de inventários
 
 - O proprietário é o UUID persistente do jogador que conecta o primeiro inventário ao terminal; terminais sem proprietário não permitem mutações remotas. Pesquisa e visualização continuam abertas. Cliques remotos, depósitos, shift-cliques e devoluções de crafting verificam a propriedade no servidor, e mensagens novas estão em `message.simplestoragemanager.terminal_not_owner` e `message.simplestoragemanager.terminal_not_owner_connection`.
