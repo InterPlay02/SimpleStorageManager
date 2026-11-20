@@ -87,6 +87,13 @@ Versão do Java: 21
   - Handler de GUI que expõe o item sob o mouse para que as teclas de atalho do JEI (R = receitas, U = usos e favoritos) funcionem ao passar o mouse sobre itens no inventário do player ou na Crafting Grid da tela do terminal.
 - Dependência declarada em `build.gradle` como `compileOnly "mezz.jei:jei-1.21.1-neoforge:[19.71.0.470,)"`; nenhum código do JEI é empacotado no JAR.
 
+## Compatibilidade com o REI (Roughly Enough Items)
+
+- Integração opcional com o REI `16.0.799` para Minecraft 1.21.1 / NeoForge 21.1.x (`rei_version=[16.0.799,17.0.0)` em `gradle.properties`): `compileOnly` da API; o Simple Storage Manager funciona sem o REI instalado e nenhum código do REI é empacotado no JAR. Cloth Config e Architectury já vêm como dependências transitivas da API.
+- `ReiTerminalIntegration` (`@REIPluginClient`, `REIClientPlugin`) registra o item do terminal como workstation de crafting vanilla e um `SimpleTransferHandler` para o menu do terminal: os 9 slots da grade (45–53) são o destino do botão `[+] mover itens` e o inventário do player (principal + hotbar) é a fonte de ingredientes — exatamente como o REI faz na crafting table vanilla, o que permite encontrar os itens do jogador com o terminal aberto.
+- Um `FocusedStackProvider` expõe o item sob o mouse (inventário, hotbar, grade e slot de resultado) para as teclas de atalho do REI (receitas/usos/favoritos). Ele apenas informa o stack ao REI: não intercepta cliques, então a extração do resultado continua normal.
+- A transferência continua sendo validada e executada no servidor pelo mecanismo padrão do REI; nenhuma área clicável extra foi adicionada à GUI.
+
 ## Propriedade, upgrades e proteção de inventários
 
 - O proprietário é o UUID persistente do jogador que conecta o primeiro inventário ao terminal; terminais sem proprietário não permitem mutações remotas. Pesquisa e visualização continuam abertas. Cliques remotos, depósitos, shift-cliques e devoluções de crafting verificam a propriedade no servidor, e mensagens novas estão em `message.simplestoragemanager.terminal_not_owner` e `message.simplestoragemanager.terminal_not_owner_connection`.
@@ -116,7 +123,6 @@ As coordenadas são relativas ao canto superior esquerdo da textura. O item usa 
 | Hotbar | origem (31,205), 9 slots | origem (31,316), 9 slots |
 
 Todos os valores ficam em `TerminalScreenLayout`. A moldura, o nome, os slots, os itens e os textos de estado das secoes sao desenhados dentro do scissor da area principal.
-
 O botão X usa as imagens completas, redimensionadas para 8x8 pixels, em `assets/simplestoragemanager/textures/screens/cross_button.png` e `assets/simplestoragemanager/textures/screens/cross_button_highlighted.png`. Seu tooltip usa `gui.simplestoragemanager.storage_manager_gui.clear_crafting`. O botão X nos avisos verdes de substituição exibe a tooltip traduzida `screen.simplestoragemanager.dismiss_notice`. Cada seção indisponível mostra no canto superior direito um ícone de alerta de 10x10 pixels, usando as imagens completas `assets/simplestoragemanager/textures/screens/report_button.png` e `assets/simplestoragemanager/textures/screens/report_button_highlighted.png`; seu tooltip traduzido quebra automaticamente em linhas. O cadeado usa `unlocked_button.png`, `unlocked_button_highlighted.png`, `locked_button.png` e `locked_button_highlighted.png`: cada textura original de 20x20 é desenhada inteira em 10x10, com amostragem nearest-neighbor (sem recorte). O hover e o estado atual escolhem conjuntamente a textura; as tooltips traduzidas `screen.simplestoragemanager.inventory_lock.*` mostram a descrição detalhada ao pressionar Shift e quebram automaticamente em linhas. Os itens nos slots de armadura, mão secundária, crafting, resultado e inventário/hotbar do jogador mostram os tooltips padrão de ItemStack. A miniatura de crafting tem nove slots contíguos, com passo 18, e um slot de resultado nos pontos indicados na tabela. Os itens da grade são persistidos apenas durante a vida do menu; ao fechá-lo, são devolvidos ou derrubados.
 
 ## Menus dropdown dos botões de inventário
@@ -176,15 +182,12 @@ Essa tabela e implementada por `TerminalScaleChoice`. A variante e escolhida nov
 ## Testes
 
 Os testes JUnit cobrem busca parcial sem diferenciar maiusculas, regras de deposito, toggle, alcance básico pelo centro do bloco usando distância ao quadrado, coordenadas/rolagem, tabela de escala, extração direita arredondada para cima com teto do limite do item, dependências de remoção dos upgrades em ordem e o planejamento puro de distribuição/capacidade do arrasto. O build foi validado com `gradlew test build --no-configuration-cache`; a inclusão acidental de classes/recursos Sophisticated ou Storage Drawers no JAR foi verificada e não ocorreu. Os caminhos de rede, capabilities, baús duplos e as integrações em execução dependem do ambiente Minecraft e devem ser conferidos em `runClient`; os testes manuais das integrações Sophisticated Backpacks e Storage Drawers ainda estão pendentes.
-
 Matriz de validação manual pendente: repetir as operações de clique, shift-clique e shift-arrasto em inventário vanilla de 64, inventário de mod de 64 e inventário de mod com slot acima do limite do item; fazer cada teste com o cadeado destrancado e trancado, em SMALL/BIG e singleplayer/multiplayer. Confirmar inserção, troca, ordem de pilhas parciais/vazias, simulação antes da mutação, devolução à origem e encerramento do arrasto sem destino. A prévia do cliente é apenas visual; o servidor decide e confirma a operação.
 
 ## Upgrades e seleção de dimensões
 
 `UpgradeAccessRules` centraliza o nível efetivo, as regras de distância e dimensão e a validação da seleção de no máximo cinco dimensões registradas. `StorageManagerGUIMenu` consulta essas regras antes de expor ou operar conexões, mantendo a validação de chunk carregada para todos os níveis.
-
 `DimensionalUpgradeSelectionScreen` mostra as dimensões recebidas do servidor, mantém alterações apenas localmente até Salvar e descarta-as ao Cancelar. A lista usa o scroller existente e a roda do mouse. Abertura, salvamento e resposta de validação são tratados por `DimensionalUpgradeOpenPayload`, `DimensionalUpgradeSavePayload` e `DimensionalUpgradeSaveResultPayload`. As chaves de tradução da tela estão em `lang/en_us.json` e `lang/pt_br.json`, sob `screen.simplestoragemanager.dimension_selector.*`.
-
 Os testes JUnit cobrem o nível efetivo, as regras de distância e dimensão dos níveis 0–3 e a validação de seleção vazia, limite de cinco, duplicatas e dimensões não registradas.
 
 ## Clique simples, shift-click, arrasto e arrasto sem shift — funcionamento atual

@@ -100,6 +100,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private static final int MENU_TITLE_COLOR = 0xFFFFFFFF;
     private static final int MENU_OPTION_COLOR = 0xFFfb8f13;
     private static final int MENU_OPTION_COLOR_UNSELECTED = 0xFF808080;
+    private static final String ADVANCED_MARK = " MkII";
+    private static final float OWNER_NAME_SCALE = 0.5F;
 
     private final Player player;
     private TerminalScreenLayout.Variant variant = TerminalScreenLayout.SMALL;
@@ -284,7 +286,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 current.slotCount(), current.filterItems(), current.filterMode()));
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(), sections,
                 view.visibleSlots(), view.notices(), view.locked(), view.originTargets(), view.operationSequence(),
-                view.playerSlots(), view.canMutateInventories(), view.advanced());
+                view.playerSlots(), view.canMutateInventories(), view.advanced(), view.ownerName());
     }
 
     private int titleSectionAt(double mouseX, double mouseY) {
@@ -729,7 +731,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         visibleSlots.addAll(payload.visibleSlots());
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(),
                 sections, visibleSlots, view.notices(), view.locked(), view.originTargets(),
-                view.operationSequence(), view.playerSlots(), view.canMutateInventories(), view.advanced());
+                view.operationSequence(), view.playerSlots(), view.canMutateInventories(),
+                view.advanced(), view.ownerName());
         remoteItems.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteSlotLimits.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteConnectionIds.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
@@ -1039,6 +1042,20 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     @Override
     protected void renderLabels(GuiGraphics graphics, int mouseX, int mouseY) {
         graphics.drawString(font, title, titleLabelX, titleLabelY, 0x404040, false);
+        if (view.advanced()) {
+            graphics.drawString(font, Component.literal(ADVANCED_MARK)
+                            .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC),
+                    titleLabelX + font.width(title), titleLabelY, 0x404040, false);
+        }
+        if (!view.ownerName().getString().isEmpty()) {
+            graphics.pose().pushPose();
+            graphics.pose().translate(titleLabelX, titleLabelY + font.lineHeight + 3, 0);
+            graphics.pose().scale(OWNER_NAME_SCALE, OWNER_NAME_SCALE, 1.0F);
+            graphics.drawString(font, Component.literal(view.ownerName().getString())
+                            .withStyle(Style.EMPTY.withBold(true).withItalic(true)),
+                    0, 0, 0x404040, false);
+            graphics.pose().popPose();
+        }
     }
 
     // Slot tooltips are rendered by this screen because BIG relocates static slots.

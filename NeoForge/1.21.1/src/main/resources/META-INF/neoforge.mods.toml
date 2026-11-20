@@ -37,6 +37,15 @@ description="A Minecraft mod that lets you access your storage from anywhere, wi
     ordering="AFTER"
     side="CLIENT"
 
+# Roughly Enough Items (REI) is an optional soft dependency: the mod works without it.
+# The recipe transfer and stack provider integration is only loaded when REI is actually installed.
+[[dependencies.simplestoragemanager]]
+    modId="roughlyenoughitems"
+    type="optional"
+    versionRange="[16.0.799,)"
+    ordering="AFTER"
+    side="CLIENT"
+
 
 # Start of user code block dependencies configuration
 # End of user code block dependencies configuration

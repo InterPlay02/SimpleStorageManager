@@ -31,7 +31,7 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
                                   List<Notice> notices, boolean locked,
                                   List<OriginTarget> originTargets, long operationSequence,
                                   List<PlayerSlot> playerSlots,
-                                  boolean canMutateInventories, boolean advanced) implements CustomPacketPayload {
+                                  boolean canMutateInventories, boolean advanced, Component ownerName) implements CustomPacketPayload {
     private static final StreamCodec<RegistryFriendlyByteBuf, ItemStack> STACK_CODEC = StreamCodec.of(
             (buffer, stack) -> {
                 int count = stack.isEmpty() ? 0 : stack.getCount();
@@ -114,6 +114,7 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
                 PLAYER_SLOTS_CODEC.encode(buffer, payload.playerSlots());
                 ByteBufCodecs.BOOL.encode(buffer, payload.canMutateInventories());
                 ByteBufCodecs.BOOL.encode(buffer, payload.advanced());
+                ComponentSerialization.STREAM_CODEC.encode(buffer, payload.ownerName());
             },
             buffer -> new TerminalViewPayload(
                     ByteBufCodecs.BOOL.decode(buffer),
@@ -127,25 +128,26 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
                     ByteBufCodecs.VAR_LONG.decode(buffer),
                     PLAYER_SLOTS_CODEC.decode(buffer),
                     ByteBufCodecs.BOOL.decode(buffer),
-                    ByteBufCodecs.BOOL.decode(buffer)));
+                    ByteBufCodecs.BOOL.decode(buffer),
+                    ComponentSerialization.STREAM_CODEC.decode(buffer)));
 
     public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
                                List<VisibleSlot> visibleSlots, List<Notice> notices) {
         this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, false,
-                List.of(), 0, List.of(), false, false);
+                List.of(), 0, List.of(), false, false, Component.empty());
     }
 
     public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
                                List<VisibleSlot> visibleSlots, List<Notice> notices, boolean locked) {
         this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, locked,
-                List.of(), 0, List.of(), false, false);
+                List.of(), 0, List.of(), false, false, Component.empty());
     }
 
     public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
                                List<VisibleSlot> visibleSlots, List<Notice> notices, boolean locked,
                                List<OriginTarget> originTargets) {
         this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, locked,
-                originTargets, 0, List.of(), false, false);
+                originTargets, 0, List.of(), false, false, Component.empty());
     }
 
     public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
@@ -153,10 +155,11 @@ public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
                                List<OriginTarget> originTargets, long operationSequence,
                                List<PlayerSlot> playerSlots) {
         this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, locked,
-                originTargets, operationSequence, playerSlots, false, false);
+                originTargets, operationSequence, playerSlots, false, false, Component.empty());
     }
 
     public TerminalViewPayload {
+        ownerName = ownerName == null ? Component.empty() : ownerName;
         sections = List.copyOf(sections);
         visibleSlots = visibleSlots.stream()
                 .filter(slot -> slot != null && slot.stack() != null)

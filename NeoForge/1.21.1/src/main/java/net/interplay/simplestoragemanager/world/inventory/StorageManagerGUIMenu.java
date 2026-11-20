@@ -1,5 +1,6 @@
 package net.interplay.simplestoragemanager.world.inventory;
 
+import com.mojang.authlib.GameProfile;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -31,6 +32,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.fml.ModList;
 import net.interplay.simplestoragemanager.access.AccessRule;
+import net.interplay.simplestoragemanager.config.SimplestoragemanagerConfig;
 import net.interplay.simplestoragemanager.access.ConnectionStatus;
 import net.interplay.simplestoragemanager.access.InventoryAdapter;
 import net.interplay.simplestoragemanager.access.MultiblockDiscovery;
@@ -293,7 +295,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(),
                 sections, visibleSlots, view.notices(), view.locked(), view.originTargets(),
                 view.operationSequence(), view.playerSlots(), view.canMutateInventories(),
-                view.advanced());
+                view.advanced(), view.ownerName());
     }
 
     public void handleViewRequest(TerminalViewRequestPayload request) {
@@ -658,6 +660,19 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         return id != null && TerminalSavedData.get(player.serverLevel()).isLocked(id);
     }
 
+    /** Nome exibido do dono do terminal, usado pela GUI quando a protecao de inventarios esta ativa. */
+    private Component ownerDisplayName(ServerPlayer viewer) {
+        if (!SimplestoragemanagerConfig.PROTECT_CONNECTED_INVENTORIES.get()) return Component.empty();
+        UUID id = terminalId();
+        if (id == null) return Component.empty();
+        UUID ownerId = TerminalSavedData.get(viewer.serverLevel()).owner(id);
+        if (ownerId == null) return Component.empty();
+        ServerPlayer owner = viewer.getServer().getPlayerList().getPlayer(ownerId);
+        if (owner != null) return owner.getDisplayName();
+        GameProfile profile = viewer.getServer().getProfileCache().get(ownerId).orElse(null);
+        return profile == null ? Component.literal(ownerId.toString()) : Component.literal(profile.getName());
+    }
+
     private void recordExtraction(ServerPlayer player, TerminalConnection connection, int slot, ItemStack extracted) {
         if (inventoryLockEnabled(player)) {
             TerminalOriginMemory.record(player, terminalId(), connection, slot, extracted);
@@ -805,7 +820,7 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
         boolean advanced = Boolean.TRUE.equals(terminalStack().get(TerminalDataComponents.TERMINAL_ADVANCED.get()));
         player.connection.send(new TerminalViewPayload(big, scrollOffset, maxScroll, sections, visible,
                 noticePayload, locked, originTargetsForView(player), lastOperationSequence, playerSlots,
-                canUseConnectedInventories(player, false), advanced));
+                canUseConnectedInventories(player, false), advanced, ownerDisplayName(player)));
     }
 
     private List<TerminalViewPayload.OriginTarget> originTargetsForView(ServerPlayer player) {
