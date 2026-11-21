@@ -75,12 +75,4 @@ dependencies {
     compileOnly "dev.emi:emi-neoforge:${emi_version}:api"
     compileOnly "mezz.jei:jei-1.21.1-neoforge:${jei_version}"
     compileOnly "me.shedaniel:RoughlyEnoughItems-api-neoforge:${rei_version}"
-
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
-    testImplementation files(sourceSets.main.compileClasspath)
-}
-
-tasks.test {
-    useJUnitPlatform()
 }

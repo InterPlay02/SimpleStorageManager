@@ -23,6 +23,17 @@ The mod is designed to be self-explanatory. In-game descriptions show you how ea
 
 The mod includes a server configuration file. It lets server administrators decide whether an inventory that is already linked to one terminal can be connected to another.
 
+## Compatibility
+
+The mod includes compatibility with the following mods:
+
+- **Sophisticated Storage:** Manage connected Sophisticated Storage inventories from the terminal.
+- **Sophisticated Backpacks:** Manage connected backpacks from the terminal.
+- **Storage Drawers:** Manage connected drawers from the terminal.
+- **EMI:** Browse stored items from the recipe viewer.
+- **JEI:** Browse stored items from the recipe viewer.
+- **REI:** Browse stored items from the recipe viewer.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
