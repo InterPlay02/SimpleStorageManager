@@ -3,7 +3,7 @@
 ![Version](https://img.shields.io/github/v/release/OWNER/REPO?label=version&color=orange)
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-brightgreen)
 ![Available for](https://img.shields.io/badge/Available%20for-NeoForge%201.21.1-orange)
-![License](https://img.shields.io/github/license/OWNER/REPO?color=blue)
+![License](https://img.shields.io/github/InterPlay02/SimpleStorageManager/blob/main/LICENSE?color=blue)
 
 A Minecraft mod that lets you access your storage from anywhere, without walking back and forth to your chests.
 
@@ -36,4 +36,4 @@ The mod includes compatibility with the following mods:
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](https://github.com/InterPlay02/SimpleStorageManager/blob/main/LICENSE)).
