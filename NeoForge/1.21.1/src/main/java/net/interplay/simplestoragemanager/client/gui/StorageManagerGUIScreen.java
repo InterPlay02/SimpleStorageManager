@@ -45,6 +45,10 @@ import net.interplay.simplestoragemanager.network.TerminalFilterSavePayload;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModScreens;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -116,10 +120,15 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private double lastTitleClickX;
     private double lastTitleClickY;
     private TerminalViewPayload view = new TerminalViewPayload(false, 0, 0, List.of(), List.of(), List.of());
-    private final Map<Long, ItemStack> remoteItems = new HashMap<>();
-    private final Map<Long, Integer> remoteSlotLimits = new HashMap<>();
-    private final Map<Long, UUID> remoteConnectionIds = new HashMap<>();
-    private final Map<Long, Integer> remoteStorageSlots = new HashMap<>();
+    /** Cached layout entries built from the current view; rebuilt only when the view revision changes. */
+    private List<ClientLayoutEntry> cachedLayoutEntries = null;
+    private int cachedLayoutRevision = -1;
+    /** Incremented whenever the terminal view data used for layout changes. */
+    private int layoutRevision = 0;
+    private final Long2ObjectOpenHashMap<ItemStack> remoteItems = new Long2ObjectOpenHashMap<>();
+    private final Long2IntOpenHashMap remoteSlotLimits = new Long2IntOpenHashMap();
+    private final Long2ObjectOpenHashMap<UUID> remoteConnectionIds = new Long2ObjectOpenHashMap<>();
+    private final Long2IntOpenHashMap remoteStorageSlots = new Long2IntOpenHashMap();
     private RemoteHit hoveredRemote;
     private boolean hoveredUnavailableIcon;
     private boolean hoveredNoticeDismiss;
@@ -148,8 +157,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     };
     private boolean draggingScroller;
     private final List<TerminalStorageClickPayload.SlotTarget> remoteDragTargets = new ArrayList<>();
-    private final Map<Long, ItemStack> remotePreviewItems = new HashMap<>();
-    private final Map<Integer, ItemStack> playerPreviewItems = new HashMap<>();
+    private final Long2ObjectOpenHashMap<ItemStack> remotePreviewItems = new Long2ObjectOpenHashMap<>();
+    private final Int2ObjectOpenHashMap<ItemStack> playerPreviewItems = new Int2ObjectOpenHashMap<>();
     private ItemStack remotePreviewCarried;
     private ItemStack remoteDragInitialCarried = ItemStack.EMPTY;
     private boolean remoteDragShift;
@@ -167,8 +176,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private long latestShiftPreviewRequestId;
     private long appliedShiftPreviewRequestId;
     private boolean shiftDragCommitPending;
-    private final Map<Integer, ItemStack> visualPlayerPreviewItems = new HashMap<>();
-    private final Map<Long, ItemStack> visualRemotePreviewItems = new HashMap<>();
+    private final Int2ObjectOpenHashMap<ItemStack> visualPlayerPreviewItems = new Int2ObjectOpenHashMap<>();
+    private final Long2ObjectOpenHashMap<ItemStack> visualRemotePreviewItems = new Long2ObjectOpenHashMap<>();
     private ItemStack visualRemotePreviewCarried;
 
     public StorageManagerGUIScreen(StorageManagerGUIMenu menu, Inventory inventory, Component title) {
@@ -287,6 +296,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         view = new TerminalViewPayload(view.big(), view.scrollOffset(), view.maxScroll(), sections,
                 view.visibleSlots(), view.notices(), view.locked(), view.originTargets(), view.operationSequence(),
                 view.playerSlots(), view.canMutateInventories(), view.advanced(), view.ownerName());
+        layoutRevision++;
     }
 
     private int titleSectionAt(double mouseX, double mouseY) {
@@ -679,6 +689,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         if (itemDragShift || shiftDragCommitPending) cancelPendingShiftDrag();
         view = payload;
         lastAppliedOperationSequence = Math.max(lastAppliedOperationSequence, payload.operationSequence());
+        layoutRevision++;
         remoteItems.clear();
         remoteSlotLimits.clear();
         remoteConnectionIds.clear();
@@ -733,6 +744,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 sections, visibleSlots, view.notices(), view.locked(), view.originTargets(),
                 view.operationSequence(), view.playerSlots(), view.canMutateInventories(),
                 view.advanced(), view.ownerName());
+        layoutRevision++;
         remoteItems.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteSlotLimits.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
         remoteConnectionIds.keySet().removeIf(key -> (int) (key >> 32) == sectionIndex);
@@ -800,6 +812,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private void drawRemoteSections(GuiGraphics graphics, int mouseX, int mouseY) {
         TerminalScreenLayout.Rect area = variant.contentArea();
         int cursor = area.top() + 2 - view.scrollOffset();
+        int viewportTop = area.top();
+        int viewportBottom = area.bottom();
         hoveredRemote = null;
         hoveredUnavailableIcon = false;
         hoveredNoticeDismiss = false;
@@ -808,8 +822,10 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         for (ClientLayoutEntry entry : layoutEntries()) {
             if (entry.notice() != null) {
                 int bottom = cursor + sectionHeight(entry.notice().slotCount()) - 4;
-                drawReplacementNotice(graphics, entry.notice(), area.left(), cursor, area.right(), bottom,
-                        mouseX, mouseY);
+                if (bottom > viewportTop && cursor < viewportBottom) {
+                    drawReplacementNotice(graphics, entry.notice(), area.left(), cursor, area.right(), bottom,
+                            mouseX, mouseY);
+                }
                 cursor = bottom + 4;
                 continue;
             }
@@ -819,6 +835,11 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             int top = cursor;
             int slotY = top + 12;
             int bottom = slotY + rows * SLOT_SIZE + 2;
+            if (bottom <= viewportTop || top >= viewportBottom) {
+                // Etapa 3: section completely outside the visible content area -> visual culling.
+                cursor = bottom + 4;
+                continue;
+            }
             boolean unavailable = section.connectionStatus() != ConnectionStatus.AVAILABLE;
             drawDottedFrame(graphics, area.left(), top, area.right(), bottom,
                     unavailable ? 0xFFFF9B45 : 0xFFD0D0D0);
@@ -843,24 +864,26 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             for (int slot = 0; slot < section.slotCount(); slot++) {
                 int x = area.left() + (slot % 9) * SLOT_SIZE;
                 int y = slotY + (slot / 9) * SLOT_SIZE;
-                graphics.blit(SLOT_TEXTURE, leftPos + x, topPos + y, 0, 0, 18, 18, 18, 18);
-                ItemStack stack;
-                if (filterEditing) {
-                    stack = filterSlotStack(index, slot);
-                } else {
-                    stack = visualRemotePreviewItems.getOrDefault(key(index, slot),
-                            remoteItems.getOrDefault(key(index, slot), ItemStack.EMPTY));
-                }
-                if (!stack.isEmpty()) {
-                    int itemX = leftPos + x + TerminalScreenLayout.ITEM_OFFSET;
-                    int itemY = topPos + y + TerminalScreenLayout.ITEM_OFFSET;
-                    graphics.renderItem(stack, itemX, itemY);
-                    renderItemDecorations(graphics, stack, itemX, itemY);
-                }
-                if (isInside(area, mouseX, mouseY)
-                        && mouseX >= leftPos + x && mouseX < leftPos + x + 18
-                        && mouseY >= topPos + y && mouseY < topPos + y + 18) {
-                    hoveredRemote = new RemoteHit(index, slot, stack);
+                if (y + SLOT_SIZE > viewportTop && y < viewportBottom) {
+                    graphics.blit(SLOT_TEXTURE, leftPos + x, topPos + y, 0, 0, 18, 18, 18, 18);
+                    ItemStack stack;
+                    if (filterEditing) {
+                        stack = filterSlotStack(index, slot);
+                    } else {
+                        stack = visualRemotePreviewItems.getOrDefault(key(index, slot),
+                                remoteItems.getOrDefault(key(index, slot), ItemStack.EMPTY));
+                    }
+                    if (!stack.isEmpty()) {
+                        int itemX = leftPos + x + TerminalScreenLayout.ITEM_OFFSET;
+                        int itemY = topPos + y + TerminalScreenLayout.ITEM_OFFSET;
+                        graphics.renderItem(stack, itemX, itemY);
+                        renderItemDecorations(graphics, stack, itemX, itemY);
+                    }
+                    if (isInside(area, mouseX, mouseY)
+                            && mouseX >= leftPos + x && mouseX < leftPos + x + 18
+                            && mouseY >= topPos + y && mouseY < topPos + y + 18) {
+                        hoveredRemote = new RemoteHit(index, slot, stack);
+                    }
                 }
             }
             if (unavailable) {
@@ -1380,7 +1403,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             remotePreviewCarried = remaining;
             return;
         }
-        Map<Integer, ItemStack> working = new HashMap<>();
+        Int2ObjectOpenHashMap<ItemStack> working = new Int2ObjectOpenHashMap<>();
         List<Integer> eligible = new ArrayList<>();
         for (int index : itemDragSlots) {
             Slot slot = menu.slots.get(index);
@@ -1449,8 +1472,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
                 .getItem().isEmpty();
         boolean hasLevel3 = !menu.slots.get(menu.upgradeStart + UpgradeSlotRules.TOP_SLOT)
                 .getItem().isEmpty();
-        Map<Integer, ItemStack> playerStacks = new HashMap<>();
-        Map<Integer, ItemStack> originalPlayerStacks = new HashMap<>();
+        Int2ObjectOpenHashMap<ItemStack> playerStacks = new Int2ObjectOpenHashMap<>();
+        Int2ObjectOpenHashMap<ItemStack> originalPlayerStacks = new Int2ObjectOpenHashMap<>();
         for (int index = menu.mainInventoryStart; index < menu.hotbarStart + 9; index++) {
             if (menu.isTerminalSlot(index)) continue;
             ItemStack stack = menu.slots.get(index).getItem().copy();
@@ -1714,7 +1737,7 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             return;
         }
         List<TerminalStorageClickPayload.SlotTarget> eligible = new ArrayList<>();
-        Map<Long, ItemStack> working = new HashMap<>();
+        Long2ObjectOpenHashMap<ItemStack> working = new Long2ObjectOpenHashMap<>();
         for (TerminalStorageClickPayload.SlotTarget target : remoteDragTargets) {
             long slotKey = key(target.section(), target.slot());
             ItemStack existing = remoteItems.getOrDefault(slotKey, ItemStack.EMPTY).copy();
@@ -2062,6 +2085,9 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
     private long key(int section, int slot) { return ((long) section << 32) | (slot & 0xFFFFFFFFL); }
 
     private List<ClientLayoutEntry> layoutEntries() {
+        if (cachedLayoutEntries != null && cachedLayoutRevision == layoutRevision) {
+            return cachedLayoutEntries;
+        }
         List<TerminalViewPayload.Notice> notices = new ArrayList<>(view.notices());
         notices.sort(Comparator.comparingInt(TerminalViewPayload.Notice::sectionIndex));
         List<ClientLayoutEntry> entries = new ArrayList<>();
@@ -2076,6 +2102,8 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
         while (noticeIndex < notices.size()) {
             entries.add(ClientLayoutEntry.notice(notices.get(noticeIndex++)));
         }
+        cachedLayoutEntries = entries;
+        cachedLayoutRevision = layoutRevision;
         return entries;
     }
 
