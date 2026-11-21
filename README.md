@@ -36,4 +36,4 @@ The mod includes compatibility with the following mods:
 
 ## License
 
-This project is licensed under the [MIT License](https://github.com/InterPlay02/SimpleStorageManager/blob/main/LICENSE)).
+This project is licensed under the [MIT License](https://github.com/InterPlay02/SimpleStorageManager/blob/main/LICENSE).
