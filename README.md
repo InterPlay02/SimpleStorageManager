@@ -1,9 +1,9 @@
 # Simple Storage Manager
 
-![Version](https://img.shields.io/github/v/release/OWNER/REPO?label=version&color=orange)
-![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-brightgreen)
-![Available for](https://img.shields.io/badge/Available%20for-NeoForge%201.21.1-orange)
-![License](https://img.shields.io/github/license/OWNER/REPO?color=blue)
+[![Version](https://img.shields.io/github/v/release/InterPlay02/SimpleStorageManager?label=version&color=orange)](https://github.com/InterPlay02/SimpleStorageManager/releases/tag/stable-release)
+![Modrinth](https://img.shields.io/badge/Available%20on-Modrinth-1bd96a?logo=modrinth&logoColor=white)
+![CurseForge](https://img.shields.io/badge/Available%20on-CurseForge-f16436?logo=curseforge&logoColor=white)
+[![License](https://img.shields.io/github/license/InterPlay02/SimpleStorageManager?color=blue)](https://github.com/InterPlay02/SimpleStorageManager/blob/main/LICENSE)
 
 A Minecraft mod that lets you access your storage from anywhere, without walking back and forth to your chests.
 
