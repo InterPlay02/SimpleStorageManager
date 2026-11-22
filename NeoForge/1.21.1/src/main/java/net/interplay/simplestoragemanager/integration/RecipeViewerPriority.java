@@ -1,7 +1,6 @@
 package net.interplay.simplestoragemanager.integration;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import net.minecraft.client.gui.screens.Screen;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;

@@ -3,8 +3,21 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.141'
 }
 
-version = '1.1'
+version = mod_version
 base.archivesName = "SimpleStorageManager"
+
+tasks.named('jar') {
+    archiveFileName = "SimpleStorageManager-NeoForge${version}.jar"
+}
+
+// Mantém a versão do neoforge.mods.toml sincronizada com mod_version.
+def modVersion = mod_version.toString()
+tasks.named('processResources') {
+    inputs.property 'mod_version', modVersion
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand([mod_version: modVersion])
+    }
+}
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
@@ -67,10 +80,16 @@ repositories {
     }
 }
 
+// O Maven da Modrinth nao fornece metadados de versao confiaveis para o Storage Drawers,
+// entao o range declarado e ancorado no ID da versao usada para compilar.
+configurations.configureEach {
+    resolutionStrategy.force "maven.modrinth:storagedrawers:${storagedrawers_compile_id}"
+}
+
 dependencies {
-    compileOnly "maven.modrinth:sophisticated-core:1.21.1-${sophisticated_core_version}"
-    compileOnly "maven.modrinth:sophisticated-storage:1.21.1-${sophisticated_storage_version}"
-    compileOnly "maven.modrinth:sophisticated-backpacks:1.21.1-${sophisticated_backpacks_version}"
+    compileOnly "maven.modrinth:sophisticated-core:${sophisticated_core_version}"
+    compileOnly "maven.modrinth:sophisticated-storage:${sophisticated_storage_version}"
+    compileOnly "maven.modrinth:sophisticated-backpacks:${sophisticated_backpacks_version}"
     compileOnly "maven.modrinth:storagedrawers:${storagedrawers_version}"
     compileOnly "dev.emi:emi-neoforge:${emi_version}:api"
     compileOnly "mezz.jei:jei-1.21.1-neoforge:${jei_version}"

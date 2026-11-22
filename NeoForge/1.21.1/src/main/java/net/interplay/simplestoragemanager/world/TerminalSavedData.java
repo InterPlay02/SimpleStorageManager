@@ -116,41 +116,6 @@ public final class TerminalSavedData extends SavedData {
         return true;
     }
 
-    public synchronized void removeConnectedBlock(ResourceKey<Level> dimension, BlockPos pos) {
-        boolean changed = false;
-        for (Map.Entry<UUID, List<TerminalConnection>> entry : connections.entrySet()) {
-            List<TerminalConnection> updated = new ArrayList<>();
-            for (TerminalConnection connection : entry.getValue()) {
-                if (!connection.containsBlock(dimension, pos)) {
-                    updated.add(connection);
-                    continue;
-                }
-                changed = true;
-                TerminalConnection remaining = connection.withoutMember(pos);
-                if (remaining != null) updated.add(remaining);
-            }
-            List<TerminalConnection> ordered = new ArrayList<>(updated.size());
-            for (int i = 0; i < updated.size(); i++) {
-                ordered.add(updated.get(i).withIdentity(updated.get(i).connectionId(), i));
-            }
-            entry.setValue(ordered);
-        }
-        if (changed) {
-            setDirty();
-            pruneFilterConfigs(currentActiveConnectionIds());
-        }
-    }
-
-    private java.util.Set<UUID> currentActiveConnectionIds() {
-        java.util.Set<UUID> ids = new java.util.HashSet<>();
-        for (List<TerminalConnection> connections : connections.values()) {
-            for (TerminalConnection connection : connections) {
-                ids.add(connection.connectionId());
-            }
-        }
-        return ids;
-    }
-
     public synchronized boolean isConnectedToOtherTerminal(ServerLevel level, UUID terminalId,
                                                             TerminalConnection candidate) {
         Set<BlockPos> candidateMembers = Set.copyOf(candidate.members());
@@ -249,12 +214,6 @@ public final class TerminalSavedData extends SavedData {
         setDirty();
     }
 
-    public synchronized void removeFilterConfig(UUID connectionId) {
-        if (filterConfigs.remove(connectionId) != null) {
-            setDirty();
-        }
-    }
-
     public synchronized InventoryOrganizerLogic.OrganizeConfig getOrganizeConfig(UUID connectionId) {
         return organizeConfigs.getOrDefault(connectionId,
                 InventoryOrganizerLogic.defaultConfig(InventoryOrganizerLogic.OrganizeOption.NAME));
@@ -264,12 +223,6 @@ public final class TerminalSavedData extends SavedData {
                                                InventoryOrganizerLogic.OrganizeConfig config) {
         organizeConfigs.put(connectionId, config);
         setDirty();
-    }
-
-    public synchronized void removeOrganizeConfig(UUID connectionId) {
-        if (organizeConfigs.remove(connectionId) != null) {
-            setDirty();
-        }
     }
 
     public static TerminalSavedData load(CompoundTag tag, HolderLookup.Provider provider) {

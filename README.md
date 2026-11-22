@@ -1,9 +1,17 @@
+<div align="center">
+
 # Simple Storage Manager
 
-[![Version](https://img.shields.io/github/v/release/InterPlay02/SimpleStorageManager?label=version&color=orange)](https://github.com/InterPlay02/SimpleStorageManager/releases/tag/stable-release)
+[![Version](https://img.shields.io/github/v/release/InterPlay02/SimpleStorageManager?label=Latest%20version&color=orange)](https://github.com/InterPlay02/SimpleStorageManager/releases)
 ![Modrinth](https://img.shields.io/badge/Available%20on-Modrinth-1bd96a?logo=modrinth&logoColor=white)
-![CurseForge](https://img.shields.io/badge/Available%20on-CurseForge-f16436?logo=curseforge&logoColor=white)
-[![License](https://img.shields.io/github/license/InterPlay02/SimpleStorageManager?color=blue)](https://github.com/InterPlay02/SimpleStorageManager/blob/main/LICENSE)
+[![CurseForge](https://img.shields.io/badge/Available%20on-CurseForge-f16436?logo=curseforge&logoColor=white)](https://www.curseforge.com/minecraft/mc-mods/simplestoragemanager)
+[![License](https://img.shields.io/github/license/InterPlay02/SimpleStorageManager?label=License&color=blue)](https://github.com/InterPlay02/SimpleStorageManager/blob/main/LICENSE)
+
+![NeoForge](https://img.shields.io/badge/Available%20on-NeoForge-f16436)
+![Forge](https://img.shields.io/badge/Available%20on-Forge-1f6feb)
+![Fabric](https://img.shields.io/badge/Available%20on-Fabric-538d4e)
+
+</div>
 
 A Minecraft mod that lets you access your storage from anywhere, without walking back and forth to your chests.
 
@@ -12,12 +20,12 @@ A Minecraft mod that lets you access your storage from anywhere, without walking
 ## Features
 
 - **Connect chests and other inventories:** Link chests, barrels, and inventories from other mods to a single terminal, then open that terminal to see and manage everything in one place.
-- **Upgrades:** Expand what your terminal can reach. Upgrades increase the distance and dimensions your connected inventories can be accessed from.
+- **Upgrades:** Expand what your terminal can do and it's reach. Upgrades increase the distance and dimensions your connected inventories can be accessed from.
 - **Multiplayer security:** The first player to connect an inventory becomes its owner. Other players can look at the storage, but only the owner can change it.
 
 ## Easy to Learn
 
-The mod is designed to be self-explanatory. In-game descriptions show you how each block, item, and screen works, so you can learn as you play.
+The mod is designed to be used in the early game stage, and to accomplish that, it is 100% self-explanatory. In-game descriptions show you how each item and screen works, so you can learn as you play.
 
 ## Configuration
 

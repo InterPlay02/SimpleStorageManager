@@ -1,18 +1,27 @@
 {
   "schemaVersion": 1,
   "id": "simplestoragemanager",
-  "version": "TODO",
+  "version": "${version}",
   "name": "Simple Storage Manager",
-  "description": "TODO: Add a description.",
+  "description": "A Minecraft mod that lets you access your storage from anywhere, without having to walk back and forth to your chests.",
   "authors": [
     "InterPlay"
   ],
-  "license": "TODO",
+  "license": "MIT",
+  "icon": "assets/simplestoragemanager/textures/mod_logo.png",
   "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.interplay.simplestoragemanager.SimpleStorageManager"
+    ],
+    "client": [
+      "net.interplay.simplestoragemanager.client.SimpleStorageManagerClient"
+    ]
+  },
   "depends": {
-    "fabricloader": "TODO",
-    "minecraft": "TODO",
-    "java": "TODO",
-    "fabric-api": "TODO"
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~1.21.8",
+    "java": ">=21",
+    "fabric-api": ">=0.136.1"
   }
 }

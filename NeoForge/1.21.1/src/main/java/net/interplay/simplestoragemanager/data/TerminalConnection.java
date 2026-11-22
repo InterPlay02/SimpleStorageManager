@@ -63,21 +63,12 @@ public record TerminalConnection(ResourceKey<Level> dimension, BlockPos pos, Dir
         implementationKind = implementationKind == null ? ImplementationKind.UNKNOWN : implementationKind;
     }
 
-    public boolean sameBlock(TerminalConnection other) {
-        return other != null && dimension.equals(other.dimension) && pos.equals(other.pos);
-    }
-
     public boolean containsBlock(ResourceKey<Level> targetDimension, BlockPos targetPos) {
         return dimension.equals(targetDimension) && members.contains(targetPos);
     }
 
     public boolean broken() {
         return !brokenMembers.isEmpty();
-    }
-
-    public TerminalConnection withMembers(List<BlockPos> newMembers) {
-        return new TerminalConnection(dimension, pos, side, newMembers, brokenMembers, lastSlotCount,
-                memberBlockIds, brokenAtMillis, connectionId, order, blockId, implementationKind);
     }
 
     public TerminalConnection withMemberBlockIds(Map<BlockPos, ResourceLocation> blockIds) {
@@ -127,13 +118,6 @@ public record TerminalConnection(ResourceKey<Level> dimension, BlockPos pos, Dir
         updated.add(member.immutable());
         return new TerminalConnection(dimension, pos, side, members, updated, lastSlotCount, memberBlockIds,
                 brokenAtMillis, connectionId, order, blockId, implementationKind);
-    }
-
-    public TerminalConnection withoutBrokenMember(BlockPos member) {
-        java.util.HashSet<BlockPos> updated = new java.util.HashSet<>(brokenMembers);
-        updated.remove(member);
-        return new TerminalConnection(dimension, pos, side, members, updated, lastSlotCount, memberBlockIds,
-                updated.isEmpty() ? 0L : brokenAtMillis, connectionId, order, blockId, implementationKind);
     }
 
     public TerminalConnection withSlotCount(int count) {

@@ -74,11 +74,6 @@ public final class InventoryOrganizerLogic {
         return new OrganizeConfig(config.option(), !config.ascending(), true);
     }
 
-    /** Mark as organized keeping the current direction. */
-    public static OrganizeConfig markOrganized(OrganizeConfig config) {
-        return new OrganizeConfig(config.option(), config.ascending(), true);
-    }
-
     /**
      * Organizes the given handler in place according to the config. Returns true if the handler
      * contents changed.
@@ -154,26 +149,6 @@ public final class InventoryOrganizerLogic {
             return primary.thenComparing(qtyDesc).thenComparing(byName);
         }
         return primary.thenComparing(byName);
-    }
-
-    /** Display-name sort key (localized, game language). */
-    public static String sortKeyName(ItemStack stack) {
-        return stack.getDisplayName().getString();
-    }
-
-    /** Quantity sort key, zero-padded so lexicographic order matches numeric order. */
-    public static String sortKeyQuantity(ItemStack stack) {
-        return String.format("%010d", stack.getCount());
-    }
-
-    /** Item-type sort key. Items without a known type sort after all known types. */
-    public static String sortKeyItemType(ItemStack stack) {
-        return isUnknownType(stack) ? "\uFFFF" : itemType(stack);
-    }
-
-    /** Mod-namespace sort key. */
-    public static String sortKeyMod(ItemStack stack) {
-        return modName(stack);
     }
 
     // ------------------------------------------------------------------

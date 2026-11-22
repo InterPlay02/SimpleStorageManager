@@ -32,10 +32,6 @@ public final class ManualInsertionRules {
         return Math.max(0, Math.min(Math.max(0, offeredCount), offeredCount - remainderCount));
     }
 
-    public static int availableCapacity(int maxCount, int storedCount, int requestedCount) {
-        return Math.min(remainingCapacity(maxCount, storedCount), Math.max(0, requestedCount));
-    }
-
     public static int remainingCapacity(int maxCount, int storedCount) {
         return Math.max(0, maxCount - Math.max(0, storedCount));
     }
@@ -61,16 +57,6 @@ public final class ManualInsertionRules {
     public static boolean isManualDragStartAllowed(boolean inventoryLocked, boolean cursorHasOrigin, boolean startInOriginInventory, boolean startInPlayerInventory) {
         if (!inventoryLocked || !cursorHasOrigin) return true;
         return startInOriginInventory || startInPlayerInventory;
-    }
-
-    /**
-     * Valida o primeiro slot do arrasto manual sem Shift: o slot precisa estar vazio ou conter um
-     * item compativel com o cursor. Arrastar com o botao direito so aceita slots vazios/compativeis;
-     * com o botao esquerdo, um slot com item diferente do cursor realiza a substituicao (swap).
-     */
-    public static boolean mayDragFromSlot(boolean rightClick, boolean slotEmpty, boolean sameItemType) {
-        if (slotEmpty) return true;
-        return !rightClick || sameItemType;
     }
 
     public record DragPlan(List<Integer> insertions, int remainingCount) {

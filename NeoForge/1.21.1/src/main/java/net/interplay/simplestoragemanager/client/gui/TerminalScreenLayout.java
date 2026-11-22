@@ -43,11 +43,7 @@ public final class TerminalScreenLayout {
         return Math.max(0, contentHeight - variant.contentArea().height());
     }
 
-    public record Point(int x, int y) {
-        public Point shifted(int dy) {
-            return new Point(x, y + dy);
-        }
-    }
+    public record Point(int x, int y) { }
 
     public record Rect(int left, int top, int right, int bottom) {
         public int width() {

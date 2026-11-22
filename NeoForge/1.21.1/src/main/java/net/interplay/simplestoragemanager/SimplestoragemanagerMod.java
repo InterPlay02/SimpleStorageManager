@@ -6,45 +6,28 @@ import org.apache.logging.log4j.LogManager;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.neoforged.neoforge.network.handling.IPayloadHandler;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
-import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.capabilities.EntityCapability;
-import net.neoforged.fml.util.thread.SidedThreadGroups;
 import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.ModList;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.bus.api.IEventBus;
 
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.server.TickTask;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.core.registries.BuiltInRegistries;
 
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModTabs;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModMenus;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModItems;
 import net.interplay.simplestoragemanager.data.TerminalDataComponents;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModRecipes;
-import net.interplay.simplestoragemanager.client.gui.StorageManagerGUIScreen;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.Queue;
-import java.util.PriorityQueue;
 import java.util.Map;
 import java.util.HashMap;
-import java.util.Comparator;
 
-import it.unimi.dsi.fastutil.ints.IntObjectPair;
-import it.unimi.dsi.fastutil.ints.IntObjectImmutablePair;
-
-/** Mod bootstrap, payload registration and server-tick scheduling. */
+/** Mod bootstrap, payload registration and server-tick connection checks. */
 @Mod("simplestoragemanager")
 public class SimplestoragemanagerMod {
 	public static final Logger LOGGER = LogManager.getLogger(SimplestoragemanagerMod.class);
@@ -88,24 +71,8 @@ public class SimplestoragemanagerMod {
 		networkingRegistered = true;
 	}
 
-	private static final Queue<IntObjectPair<Runnable>> workToBeScheduled = new ConcurrentLinkedQueue<>();
-	private static final PriorityQueue<TickTask> workQueue = new PriorityQueue<>(Comparator.comparingInt(TickTask::getTick));
-
-	public static void queueServerWork(int delay, Runnable action) {
-		if (Thread.currentThread().getThreadGroup() == SidedThreadGroups.SERVER)
-			workToBeScheduled.add(new IntObjectImmutablePair<>(delay, action));
-	}
-
 	@SubscribeEvent
 	public void tick(ServerTickEvent.Post event) {
-		int currentTick = event.getServer().getTickCount();
-		IntObjectPair<Runnable> work;
-		while ((work = workToBeScheduled.poll()) != null) {
-			workQueue.add(new TickTask(currentTick + work.leftInt(), work.right()));
-		}
-		while (!workQueue.isEmpty() && currentTick >= workQueue.peek().getTick()) {
-			workQueue.poll().run();
-		}
 		for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
 			if (player.containerMenu instanceof StorageManagerGUIMenu menu) {
 				menu.tickConnectionAvailability();

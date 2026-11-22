@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Minecraft Client (NeoForge 21.1.262)" type="GradleRunConfiguration" factoryName="Gradle">
+  <configuration default="false" name="Minecraft Client (Fabric 1.21.8)" type="GradleRunConfiguration" factoryName="Gradle">
     <ExternalSystemSettings>
       <option name="executionName" />
       <option name="externalProjectPath" value="$PROJECT_DIR$" />

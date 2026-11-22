@@ -20,11 +20,6 @@ public final class TerminalTitleLogic {
         return 60L;
     }
 
-    /** Full cycle: left travel, pause, right travel, pause. */
-    public static long cycleTicks() {
-        return directionTicks() + pauseTicks() + directionTicks() + pauseTicks();
-    }
-
     public static int scrollRange(int textWidth, int boxWidth) {
         return Math.max(0, textWidth - boxWidth);
     }

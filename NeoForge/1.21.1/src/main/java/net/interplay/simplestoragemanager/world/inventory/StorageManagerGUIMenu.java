@@ -28,7 +28,6 @@ import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.level.Level;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
-import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.fml.ModList;
 import net.interplay.simplestoragemanager.access.AccessRule;
@@ -56,7 +55,6 @@ import net.interplay.simplestoragemanager.network.TerminalNoticeDismissPayload;
 import net.interplay.simplestoragemanager.network.TerminalRenamePayload;
 import net.interplay.simplestoragemanager.network.TerminalStorageClickPayload;
 import net.interplay.simplestoragemanager.network.TerminalConnectionStatusPayload;
-import net.interplay.simplestoragemanager.network.TerminalLockTogglePayload;
 import net.interplay.simplestoragemanager.network.TerminalViewPayload;
 import net.interplay.simplestoragemanager.network.TerminalViewRequestPayload;
 import net.interplay.simplestoragemanager.network.TerminalFilterSavePayload;
@@ -64,7 +62,6 @@ import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewPayloa
 import net.interplay.simplestoragemanager.network.TerminalShiftDragPreviewRequestPayload;
 import net.interplay.simplestoragemanager.world.TerminalSavedData;
 import net.interplay.simplestoragemanager.world.TerminalOriginMemory;
-import net.interplay.simplestoragemanager.SimplestoragemanagerMod;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModItems;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModMenus;
 import net.interplay.simplestoragemanager.client.gui.TerminalScreenLayout;
@@ -2785,26 +2782,6 @@ public class StorageManagerGUIMenu extends AbstractContainerMenu implements Simp
     private record RemoteDestination(IItemHandler handler, int slot, TerminalConnection connection) { }
     private record ManualRemoteDestination(
             InventoryAdapter adapter, int slot, boolean directManual, int capacity) { }
-
-    private void depositIntoConnections(ItemStack stack, boolean storageOnly) {
-        if (!(entity instanceof ServerPlayer player) || stack.isEmpty()) return;
-        UUID id = terminalId();
-        if (id == null) return;
-        List<TerminalConnection> connections = TerminalSavedData.get(player.serverLevel()).connections(id);
-        if (connections.isEmpty() || !canUseConnectedInventories(player, false)) return;
-        ItemStack itemType = stack.copyWithCount(1);
-        insertIntoRememberedOrigins(stack, stack.getCount());
-        List<RemoteDestination> destinations = new ArrayList<>();
-        for (TerminalConnection connection : connections) {
-            InventoryAdapter.Resolution resolution = verifyConnection(connection, true);
-            if (resolution.status() != ConnectionStatus.AVAILABLE || resolution.adapter() == null
-                    || resolution.adapter().isStorage() != storageOnly) continue;
-            IItemHandler handler = resolution.adapter().handler();
-            destinations.addAll(destinationsFor(handler, 0, handler.getSlots(), connection));
-        }
-        int inserted = insertIntoDestinations(stack, stack.getCount(), destinations);
-        consumeMatchingOriginRecords(player, id, itemType, inserted);
-    }
 
     @Override
     public boolean canDragTo(Slot slot) {

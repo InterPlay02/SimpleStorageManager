@@ -1,7 +1,6 @@
 package net.interplay.simplestoragemanager.world.inventory;
 
 import net.minecraft.world.Container;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.Slot;
 
 /** Slots are rendered by the custom screen so their coordinates can scroll and use BIG layout. */
