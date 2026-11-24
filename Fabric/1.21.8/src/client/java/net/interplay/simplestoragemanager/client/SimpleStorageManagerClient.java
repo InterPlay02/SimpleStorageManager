@@ -1,17 +1,29 @@
 package net.interplay.simplestoragemanager.client;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.interplay.simplestoragemanager.ClientBridge;
+import net.interplay.simplestoragemanager.network.ClientPayloadHandlers;
+import net.interplay.simplestoragemanager.config.SimplestoragemanagerConfig;
+import net.interplay.simplestoragemanager.init.SimplestoragemanagerModScreens;
+import net.interplay.simplestoragemanager.integration.RecipeViewerPriority;
+import net.interplay.simplestoragemanager.item.UpgradeTooltip;
+import net.interplay.simplestoragemanager.network.ServerConfigSyncPayload;
 
-/**
- * Client-only entrypoint for the Fabric port.
- *
- * <p>Phase 2 scaffold only: screen registration (HandledScreens), client-side
- * event listeners and recipe-viewer integrations are intentionally not ported
- * yet — that is Phase 3. Kept empty/loadable so the dev client starts.</p>
- */
+/** Client entrypoint: screens, S2C receivers and client-only hooks. */
 public final class SimpleStorageManagerClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
-        // Phase 3: HandledScreens.register(...), client events, EMI/JEI/REI hooks.
+        SimplestoragemanagerModScreens.register();
+        ClientPayloadHandlers.register();
+        ClientBridgeSetup.register();
+        RecipeViewerPriority.register();
+        UpgradeTooltip.register();
+
+        ClientBridge.menuStateSender = ClientPlayNetworking::send;
+        ClientBridge.configHandler = payload ->
+                SimplestoragemanagerConfig.setSyncedScrollSpeed(payload.scrollSpeed());
+        ClientPlayNetworking.registerGlobalReceiver(ServerConfigSyncPayload.TYPE, (payload, context) ->
+                ClientBridge.configHandler.accept(payload));
     }
 }

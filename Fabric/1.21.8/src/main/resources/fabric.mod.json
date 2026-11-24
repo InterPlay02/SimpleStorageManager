@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "simplestoragemanager",
-  "version": "${version}",
+  "version": "v${version}",
   "name": "Simple Storage Manager",
   "description": "A Minecraft mod that lets you access your storage from anywhere, without having to walk back and forth to your chests.",
   "authors": [
@@ -16,12 +16,23 @@
     ],
     "client": [
       "net.interplay.simplestoragemanager.client.SimpleStorageManagerClient"
+    ],
+    "rei_client": [
+      "net.interplay.simplestoragemanager.integration.ReiTerminalIntegration"
     ]
   },
+  "mixins": [
+    "simplestoragemanager.mixins.json"
+  ],
+  "accessWidener": "simplestoragemanager.accesswidener",
   "depends": {
     "fabricloader": ">=0.20.1",
     "minecraft": "~1.21.8",
     "java": ">=21",
     "fabric-api": ">=0.136.1"
+  },
+  "suggests": {
+    "roughlyenoughitems": "*",
+    "storagedrawers": "*"
   }
 }

@@ -3,7 +3,8 @@ plugins {
     id 'maven-publish'
 }
 
-version = project.mod_version
+// Export name pattern: SimpleStorageManager-Fabric-v<mod_version> (e.g. v1.1)
+version = "v${project.mod_version}"
 group = project.maven_group
 
 base {
@@ -11,12 +12,15 @@ base {
 }
 
 repositories {
-    // Optional compileOnly integrations (EMI/JEI/REI, Sophisticated, Storage Drawers)
-    // will be declared here during Phase 3, together with their Fabric 1.21.8 artifacts.
-    // They must remain compileOnly / modCompileOnly and must never be bundled in the jar.
+    // CurseMaven hosts the confirmed Fabric 1.21.8 builds of REI and Storage Drawers.
+    maven { url = 'https://cursemaven.com'; content { includeGroup 'curse.maven' } }
+    // REI API artifact supplies the Architectury/cloth types referenced by its signatures.
+    maven { url = 'https://maven.shedaniel.me' }
 }
 
 loom {
+    accessWidenerPath = file("src/main/resources/simplestoragemanager.accesswidener")
+
     // Keep a dedicated client source set so loader-independent (main/common) code stays
     // separate from client-only code (screens, recipe-viewer integrations).
     splitEnvironmentSourceSets()
@@ -24,7 +28,7 @@ loom {
     mods {
         "simplestoragemanager" {
             sourceSet sourceSets.main
-            sourceSet sourceSets.client
+                   sourceSet sourceSets.client
         }
     }
 }
@@ -35,14 +39,30 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Optional integrations: compile only, never bundled in the exported jar.
+    modCompileOnly "curse.maven:storage-drawers-223852:6967708"    // Storage Drawers 18.3.2 Fabric 1.21.8
+    modCompileOnly "curse.maven:roughly-enough-items-310111:6833148" // REI 20.0.811 Fabric 1.21.8
+    // O JAR do CurseMaven não tem dependências transitivas; a API do maven REI traz
+    // Architectury/cloth-config no compile classpath (nada é embutido no JAR final).
+    modCompileOnly "me.shedaniel:RoughlyEnoughItems-api-fabric:20.0.811"
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
 }
 
 processResources {
-    def version = project.version
-    inputs.property "version", version
+    def modVersion = project.mod_version
+    inputs.property "version", project.version
 
     filesMatching("fabric.mod.json") {
-        expand "version": version
+        // fabric.mod.json adds the "v" prefix itself, so pass the raw mod_version here.
+        expand "version": modVersion
     }
 }
 

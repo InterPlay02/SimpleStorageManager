@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "net.interplay.simplestoragemanager.mixin",
+  "minVersion": "0.8",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ItemTossMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "EVF",
+    "TRC",
+    "FPF"
+  ],
+  "key": {
+    "E": "minecraft:ender_pearl",
+    "V": "minecraft:glass_pane",
+    "F": "minecraft:iron_ingot",
+    "T": "minecraft:redstone_torch",
+    "R": "minecraft:redstone",
+    "C": "minecraft:crafting_table",
+    "P": "minecraft:heavy_weighted_pressure_plate"
+  },
+  "result": {
+    "id": "simplestoragemanager:storage_manager",
+    "count": 1
+  }
+}

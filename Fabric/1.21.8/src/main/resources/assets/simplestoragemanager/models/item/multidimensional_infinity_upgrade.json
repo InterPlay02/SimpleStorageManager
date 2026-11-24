@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "simplestoragemanager:item/multidimensional_infinity_upgrade"
+  }
+}

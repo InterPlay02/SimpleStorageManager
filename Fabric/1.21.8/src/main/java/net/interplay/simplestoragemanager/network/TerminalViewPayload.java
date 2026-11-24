@@ -1,0 +1,239 @@
+package net.interplay.simplestoragemanager.network;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ComponentSerialization;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
+import net.interplay.simplestoragemanager.SimplestoragemanagerMod;
+import net.interplay.simplestoragemanager.access.ConnectionStatus;
+
+import java.util.List;
+import java.util.UUID;
+
+    /** Server snapshot for terminal layout, remote slots, origin previews and operation reconciliation. */
+public record TerminalViewPayload(boolean big, int scrollOffset, int maxScroll,
+                                   List<Section> sections, List<VisibleSlot> visibleSlots,
+                                   List<Notice> notices, boolean locked,
+                                   List<OriginTarget> originTargets, long operationSequence,
+                                   List<PlayerSlot> playerSlots,
+                                   boolean canMutateInventories, boolean advanced, Component ownerName) implements CustomPacketPayload {
+    // Count is serialized independently of the NBT so stacks larger than 99 round-trip correctly.
+    private static final StreamCodec<RegistryFriendlyByteBuf, ItemStack> STACK_CODEC = StreamCodec.of(
+            (buffer, stack) -> {
+                int count = stack.isEmpty() ? 0 : stack.getCount();
+                ByteBufCodecs.VAR_INT.encode(buffer, count);
+                if (count > 0) {
+                    // ItemStack.save() is gone in 1.21.8; codecs now serialize stacks to NBT.
+                    Tag tag = ItemStack.CODEC.encodeStart(
+                            buffer.registryAccess().createSerializationContext(NbtOps.INSTANCE),
+                            stack.copyWithCount(1)).result().orElseThrow();
+                    buffer.writeNbt(tag);
+                }
+            },
+            buffer -> {
+                int count = ByteBufCodecs.VAR_INT.decode(buffer);
+                if (count <= 0) return ItemStack.EMPTY;
+                CompoundTag tag = buffer.readNbt();
+                if (tag == null) return ItemStack.EMPTY;
+                // parseOptional() is gone; the optional codec keeps the same tolerant behaviour.
+                ItemStack stack = ItemStack.OPTIONAL_CODEC.parse(
+                        buffer.registryAccess().createSerializationContext(NbtOps.INSTANCE), tag)
+                        .result().orElse(ItemStack.EMPTY);
+                if (!stack.isEmpty()) stack.setCount(count);
+                return stack;
+            });
+    private static final StreamCodec<RegistryFriendlyByteBuf, Section> SECTION_CODEC = StreamCodec.composite(
+            ComponentSerialization.STREAM_CODEC, Section::label,
+            ByteBufCodecs.stringUtf8(128), Section::coordinate,
+            ByteBufCodecs.VAR_INT, Section::status,
+            ByteBufCodecs.VAR_INT, Section::slotCount,
+            ByteBufCodecs.<RegistryFriendlyByteBuf, ItemStack>list().apply(STACK_CODEC), Section::filterItems,
+            ByteBufCodecs.VAR_INT, Section::filterMode,
+            Section::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, UUID> UUID_CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_LONG, UUID::getMostSignificantBits,
+            ByteBufCodecs.VAR_LONG, UUID::getLeastSignificantBits,
+            UUID::new);
+    public static final StreamCodec<RegistryFriendlyByteBuf, VisibleSlot> VISIBLE_SLOT_CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_INT, VisibleSlot::section,
+            ByteBufCodecs.VAR_INT, VisibleSlot::slot,
+            STACK_CODEC, VisibleSlot::stack,
+            ByteBufCodecs.VAR_INT, VisibleSlot::slotLimit,
+            UUID_CODEC, VisibleSlot::connectionId,
+            ByteBufCodecs.VAR_INT, VisibleSlot::storageSlot,
+            VisibleSlot::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, Notice> NOTICE_CODEC = StreamCodec.composite(
+            ByteBufCodecs.stringUtf8(32767), Notice::dimension,
+            BlockPos.STREAM_CODEC, Notice::pos,
+            ByteBufCodecs.VAR_INT, Notice::sectionIndex,
+            ByteBufCodecs.VAR_INT, Notice::slotCount,
+            Notice::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, OriginTarget> ORIGIN_TARGET_CODEC =
+            StreamCodec.composite(
+                    ByteBufCodecs.VAR_INT, OriginTarget::section,
+                    ByteBufCodecs.VAR_INT, OriginTarget::slot,
+                    STACK_CODEC, OriginTarget::item,
+                    ByteBufCodecs.VAR_INT, OriginTarget::count,
+                    ByteBufCodecs.VAR_INT, OriginTarget::slotLimit,
+                    OriginTarget::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, PlayerSlot> PLAYER_SLOT_CODEC =
+            StreamCodec.composite(
+                    ByteBufCodecs.VAR_INT, PlayerSlot::slot,
+                    STACK_CODEC, PlayerSlot::stack,
+                    PlayerSlot::new);
+    private static final StreamCodec<RegistryFriendlyByteBuf, List<Section>> SECTIONS_CODEC =
+            ByteBufCodecs.<RegistryFriendlyByteBuf, Section>list().apply(SECTION_CODEC);
+    private static final StreamCodec<RegistryFriendlyByteBuf, List<VisibleSlot>> VISIBLE_SLOTS_CODEC =
+            ByteBufCodecs.<RegistryFriendlyByteBuf, VisibleSlot>list().apply(VISIBLE_SLOT_CODEC);
+    private static final StreamCodec<RegistryFriendlyByteBuf, List<Notice>> NOTICES_CODEC =
+            ByteBufCodecs.<RegistryFriendlyByteBuf, Notice>list().apply(NOTICE_CODEC);
+    private static final StreamCodec<RegistryFriendlyByteBuf, List<OriginTarget>> ORIGIN_TARGETS_CODEC =
+            ByteBufCodecs.<RegistryFriendlyByteBuf, OriginTarget>list().apply(ORIGIN_TARGET_CODEC);
+    private static final StreamCodec<RegistryFriendlyByteBuf, List<PlayerSlot>> PLAYER_SLOTS_CODEC =
+            ByteBufCodecs.<RegistryFriendlyByteBuf, PlayerSlot>list().apply(PLAYER_SLOT_CODEC);
+    public static final Type<TerminalViewPayload> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(SimplestoragemanagerMod.MODID, "terminal_view"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, TerminalViewPayload> STREAM_CODEC = StreamCodec.of(
+            (buffer, payload) -> {
+                ByteBufCodecs.BOOL.encode(buffer, payload.big());
+                ByteBufCodecs.VAR_INT.encode(buffer, payload.scrollOffset());
+                ByteBufCodecs.VAR_INT.encode(buffer, payload.maxScroll());
+                SECTIONS_CODEC.encode(buffer, payload.sections());
+                VISIBLE_SLOTS_CODEC.encode(buffer, payload.visibleSlots());
+                NOTICES_CODEC.encode(buffer, payload.notices());
+                ByteBufCodecs.BOOL.encode(buffer, payload.locked());
+                ORIGIN_TARGETS_CODEC.encode(buffer, payload.originTargets());
+                ByteBufCodecs.VAR_LONG.encode(buffer, payload.operationSequence());
+                PLAYER_SLOTS_CODEC.encode(buffer, payload.playerSlots());
+                ByteBufCodecs.BOOL.encode(buffer, payload.canMutateInventories());
+                ByteBufCodecs.BOOL.encode(buffer, payload.advanced());
+                ComponentSerialization.STREAM_CODEC.encode(buffer, payload.ownerName());
+            },
+            buffer -> new TerminalViewPayload(
+                    ByteBufCodecs.BOOL.decode(buffer),
+                    ByteBufCodecs.VAR_INT.decode(buffer),
+                    ByteBufCodecs.VAR_INT.decode(buffer),
+                    SECTIONS_CODEC.decode(buffer),
+                    VISIBLE_SLOTS_CODEC.decode(buffer),
+                    NOTICES_CODEC.decode(buffer),
+                    ByteBufCodecs.BOOL.decode(buffer),
+                    ORIGIN_TARGETS_CODEC.decode(buffer),
+                    ByteBufCodecs.VAR_LONG.decode(buffer),
+                    PLAYER_SLOTS_CODEC.decode(buffer),
+                    ByteBufCodecs.BOOL.decode(buffer),
+                    ByteBufCodecs.BOOL.decode(buffer),
+                    ComponentSerialization.STREAM_CODEC.decode(buffer)));
+
+    public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
+                               List<VisibleSlot> visibleSlots, List<Notice> notices) {
+        this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, false,
+                List.of(), 0, List.of(), false, false, Component.empty());
+    }
+
+    public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
+                               List<VisibleSlot> visibleSlots, List<Notice> notices, boolean locked) {
+        this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, locked,
+                List.of(), 0, List.of(), false, false, Component.empty());
+    }
+
+    public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
+                               List<VisibleSlot> visibleSlots, List<Notice> notices, boolean locked,
+                               List<OriginTarget> originTargets) {
+        this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, locked,
+                originTargets, 0, List.of(), false, false, Component.empty());
+    }
+
+    public TerminalViewPayload(boolean big, int scrollOffset, int maxScroll, List<Section> sections,
+                               List<VisibleSlot> visibleSlots, List<Notice> notices, boolean locked,
+                               List<OriginTarget> originTargets, long operationSequence,
+                               List<PlayerSlot> playerSlots) {
+        this(big, scrollOffset, maxScroll, sections, visibleSlots, notices, locked,
+                originTargets, operationSequence, playerSlots, false, false, Component.empty());
+    }
+
+    public TerminalViewPayload {
+        ownerName = ownerName == null ? Component.empty() : ownerName;
+        sections = List.copyOf(sections);
+        visibleSlots = visibleSlots.stream()
+                .filter(slot -> slot != null && slot.stack() != null)
+                .map(slot -> new VisibleSlot(slot.section(), slot.slot(), slot.stack().copy(), slot.slotLimit(),
+                        slot.connectionId(), slot.storageSlot()))
+                .toList();
+        notices = List.copyOf(notices);
+        originTargets = List.copyOf(originTargets);
+        playerSlots = playerSlots.stream()
+                .filter(slot -> slot != null && slot.stack() != null)
+                .map(slot -> new PlayerSlot(slot.slot(), slot.stack().copy()))
+                .toList();
+    }
+
+    @Override
+    public Type<TerminalViewPayload> type() { return TYPE; }
+
+    public record Section(Component label, String coordinate, int status, int slotCount,
+                          List<ItemStack> filterItems, int filterMode) {
+        public Section {
+            filterItems = List.copyOf(filterItems.stream().map(ItemStack::copy).toList());
+            filterMode = Math.max(0, Math.min(1, filterMode));
+        }
+
+        public ConnectionStatus connectionStatus() {
+            ConnectionStatus[] values = ConnectionStatus.values();
+            return status >= 0 && status < values.length ? values[status] : ConnectionStatus.BLOCK_REMOVED;
+        }
+
+        public boolean filterAllow() {
+            return filterMode == 0;
+        }
+    }
+
+    public record VisibleSlot(int section, int slot, ItemStack stack, int slotLimit,
+                              UUID connectionId, int storageSlot) {
+        private static final UUID NO_CONNECTION = new UUID(0L, 0L);
+
+        public VisibleSlot(int section, int slot, ItemStack stack) {
+            this(section, slot, stack, stack.getMaxStackSize(), NO_CONNECTION, slot);
+        }
+
+        public VisibleSlot(int section, int slot, ItemStack stack, int slotLimit) {
+            this(section, slot, stack, slotLimit, NO_CONNECTION, slot);
+        }
+
+        public VisibleSlot {
+            slotLimit = Math.max(0, slotLimit);
+            connectionId = connectionId == null ? NO_CONNECTION : connectionId;
+            storageSlot = Math.max(0, storageSlot);
+        }
+    }
+    public record Notice(String dimension, BlockPos pos, int sectionIndex, int slotCount) { }
+    public record OriginTarget(int section, int slot, ItemStack item, int count, int slotLimit) {
+        public OriginTarget {
+            item = item == null ? ItemStack.EMPTY : item.copyWithCount(1);
+            count = Math.max(0, count);
+            slotLimit = Math.max(0, slotLimit);
+        }
+
+        @Override
+        public ItemStack item() {
+            return item.copy();
+        }
+    }
+    public record PlayerSlot(int slot, ItemStack stack) {
+        public PlayerSlot {
+            stack = stack == null ? ItemStack.EMPTY : stack.copy();
+        }
+
+        @Override
+        public ItemStack stack() {
+            return stack.copy();
+        }
+    }
+}

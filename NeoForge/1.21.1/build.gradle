@@ -7,7 +7,7 @@ version = mod_version
 base.archivesName = "SimpleStorageManager"
 
 tasks.named('jar') {
-    archiveFileName = "SimpleStorageManager-NeoForge${version}.jar"
+    archiveFileName = "SimpleStorageManager-NeoForge-v${version}.jar"
 }
 
 // Mantém a versão do neoforge.mods.toml sincronizada com mod_version.

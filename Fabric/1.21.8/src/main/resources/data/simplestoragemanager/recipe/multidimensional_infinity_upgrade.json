@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "FNN",
+    "TEN",
+    "CTF"
+  ],
+  "key": {
+    "F": "minecraft:iron_ingot",
+    "N": "minecraft:netherite_scrap",
+    "T": "minecraft:redstone_torch",
+    "E": "minecraft:nether_star",
+    "C": "minecraft:copper_ingot"
+  },
+  "result": {
+    "id": "simplestoragemanager:multidimensional_infinity_upgrade",
+    "count": 1
+  }
+}

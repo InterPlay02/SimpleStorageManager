@@ -1,0 +1,20 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "EGF",
+    "RSR",
+    "FPF"
+  ],
+  "key": {
+    "E": "minecraft:ender_eye",
+    "G": "minecraft:glass_pane",
+    "F": "minecraft:iron_ingot",
+    "R": "minecraft:redstone_torch",
+    "S": "minecraft:calibrated_sculk_sensor",
+    "P": "minecraft:light_weighted_pressure_plate"
+  },
+  "result": {
+    "id": "simplestoragemanager:dimensional_infinity_upgrade",
+    "count": 1
+  }
+}
