@@ -3,6 +3,9 @@
 Este arquivo registra a auditoria, o setup Fabric e o resultado da migração de código.
 O módulo NeoForge em `D:\Modding\SimpleStorageManager\NeoForge\1.21.1` não foi alterado.
 
+> **Nota:** este é um registro histórico da auditoria/migração. O estado atual do código
+> Fabric 1.21.8 está descrito em `docs/resumo.md`.
+
 ## Versões e compatibilidade (validadas contra o `fabric-example-mod` oficial da branch 1.21.8)
 
 | Item | Versão | Observação |

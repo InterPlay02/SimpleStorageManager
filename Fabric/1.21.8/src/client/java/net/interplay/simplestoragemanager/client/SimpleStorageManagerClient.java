@@ -6,7 +6,6 @@ import net.interplay.simplestoragemanager.ClientBridge;
 import net.interplay.simplestoragemanager.network.ClientPayloadHandlers;
 import net.interplay.simplestoragemanager.config.SimplestoragemanagerConfig;
 import net.interplay.simplestoragemanager.init.SimplestoragemanagerModScreens;
-import net.interplay.simplestoragemanager.integration.RecipeViewerPriority;
 import net.interplay.simplestoragemanager.item.UpgradeTooltip;
 import net.interplay.simplestoragemanager.network.ServerConfigSyncPayload;
 
@@ -17,7 +16,6 @@ public final class SimpleStorageManagerClient implements ClientModInitializer {
         SimplestoragemanagerModScreens.register();
         ClientPayloadHandlers.register();
         ClientBridgeSetup.register();
-        RecipeViewerPriority.register();
         UpgradeTooltip.register();
 
         ClientBridge.menuStateSender = ClientPlayNetworking::send;

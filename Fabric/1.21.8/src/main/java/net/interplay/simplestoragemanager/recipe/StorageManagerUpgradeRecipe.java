@@ -42,11 +42,6 @@ public class StorageManagerUpgradeRecipe implements CraftingRecipe {
         this.showNotification = showNotification;
     }
 
-    public StorageManagerUpgradeRecipe(String group, CraftingBookCategory category,
-                                       ShapedRecipePattern pattern) {
-        this(group, category, pattern, true);
-    }
-
     @Override
     public RecipeSerializer<? extends CraftingRecipe> getSerializer() {
         return StorageManagerUpgradeRecipeSerializer.INSTANCE;
@@ -87,11 +82,6 @@ public class StorageManagerUpgradeRecipe implements CraftingRecipe {
     @Override
     public boolean showNotification() {
         return this.showNotification;
-    }
-
-    /** The pattern itself validates the crafting grid size. */
-    public boolean canCraftInDimensions(int width, int height) {
-        return width >= this.pattern.width() && height >= this.pattern.height();
     }
 
     @Override

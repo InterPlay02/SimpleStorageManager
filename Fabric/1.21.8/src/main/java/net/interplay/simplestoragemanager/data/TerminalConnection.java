@@ -134,7 +134,6 @@ public record TerminalConnection(ResourceKey<Level> dimension, BlockPos pos, Dir
         UNKNOWN,
         VANILLA_CONTAINER,
         MODDED_HANDLER,
-        SOPHISTICATED,
         STORAGE_DRAWERS
     }
 }

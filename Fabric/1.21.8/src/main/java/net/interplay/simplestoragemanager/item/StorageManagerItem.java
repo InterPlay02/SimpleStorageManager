@@ -18,8 +18,4 @@ public class StorageManagerItem extends Item {
 				? "item.simplestoragemanager.storage_manager_advanced"
 				: "item.simplestoragemanager.storage_manager");
 	}
-
-	public boolean shouldCauseReequipAnimation(ItemStack oldStack, ItemStack newStack, boolean slotChanged) {
-		return slotChanged && !oldStack.equals(newStack);
-	}
 }

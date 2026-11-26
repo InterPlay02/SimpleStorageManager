@@ -17,6 +17,9 @@
     "client": [
       "net.interplay.simplestoragemanager.client.SimpleStorageManagerClient"
     ],
+    "rei_common": [
+      "net.interplay.simplestoragemanager.integration.ReiUpgradeRecipePlugin"
+    ],
     "rei_client": [
       "net.interplay.simplestoragemanager.integration.ReiTerminalIntegration"
     ]

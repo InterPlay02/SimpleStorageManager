@@ -104,11 +104,6 @@ public final class InventoryAdapter {
                 && className.contains("drawer")) {
             return ImplementationKind.STORAGE_DRAWERS;
         }
-        if ((net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("sophisticatedstorage")
-                || net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("sophisticatedbackpacks"))
-                && (className.contains("sophisticated") || className.contains("backpack"))) {
-            return ImplementationKind.SOPHISTICATED;
-        }
         if (storage instanceof net.fabricmc.fabric.api.transfer.v1.item.InventoryStorage
                 || entity instanceof Container) {
             return ImplementationKind.VANILLA_CONTAINER;

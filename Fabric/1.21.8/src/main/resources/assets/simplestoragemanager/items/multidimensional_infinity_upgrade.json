@@ -2,5 +2,6 @@
   "model": {
     "type": "minecraft:model",
     "model": "simplestoragemanager:item/multidimensional_infinity_upgrade"
-  }
+  },
+  "hand_animation_on_swap": false
 }

@@ -16,10 +16,6 @@ public class InfinityUpgradeItem extends Item {
 		super(properties);
 	}
 
-	public boolean shouldCauseReequipAnimation(ItemStack oldStack, ItemStack newStack, boolean slotChanged) {
-		return slotChanged && !oldStack.equals(newStack);
-	}
-
 	// Vanilla 1.21.8 marca appendHoverText(...) como deprecated, mas ainda é a API de tooltip.
 	@SuppressWarnings("deprecation")
 	@Override
