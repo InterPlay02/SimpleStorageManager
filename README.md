@@ -15,7 +15,14 @@
 
 A Minecraft mod that lets you access your storage from anywhere, without walking back and forth to your chests.
 
-> **Status:** This mod is under active development. Support for **Fabric** and **Forge** is planned for the main versions in the future.
+> **Status:** This mod is under active development. It is available for **NeoForge** and now also for **Fabric**; support for **Forge** is planned for future versions.
+
+## Available versions
+
+| Loader | Minecraft | Mod version | Source |
+|---|---|---|---|
+| NeoForge | 1.21.1 | v1.2.0 | `NeoForge/1.21.1` |
+| Fabric | 1.21.8 | v1.2.0 | `Fabric/1.21.8` |
 
 ## Features
 
