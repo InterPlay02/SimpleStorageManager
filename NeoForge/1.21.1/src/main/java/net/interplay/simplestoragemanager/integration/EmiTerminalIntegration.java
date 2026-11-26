@@ -103,8 +103,9 @@ public final class EmiTerminalIntegration implements EmiPlugin {
 
     /**
      * EMI stack provider for the terminal screen. Resolves the item stack under the mouse cursor
-     * from the crafting grid and the player's personal inventory (main + hotbar), so that EMI
-     * shortcut keys (R = view recipes, U = view uses) work when the terminal GUI is open.
+     * from the crafting grid, the player's personal inventory (main + hotbar) and the remote
+     * inventories (snapshots), so that EMI shortcut keys (R = view recipes, U = view uses) work when
+     * the terminal GUI is open.
      *
      * <p>Without this provider, {@link dev.emi.emi.screen.EmiScreenManager#getHoveredStack}
      * falls back to {@code HandledScreenAccessor#getFocusedSlot()}, which is null unless the
@@ -115,18 +116,13 @@ public final class EmiTerminalIntegration implements EmiPlugin {
 
         @Override
         public EmiStackInteraction getStackAt(StorageManagerGUIScreen screen, int mouseX, int mouseY) {
-            double x = mouseX - screen.getGuiLeft();
-            double y = mouseY - screen.getGuiTop();
-            Slot slot = screen.getSlotAtRelative(x, y);
-            if (slot != null) {
-                ItemStack stack = slot.getItem();
-                if (!stack.isEmpty()) {
-                    // clickable=false: teclas de atalho (R/U) podem resolver o stack sob o mouse,
-                    // mas cliques não são interceptados pelo EMI — deixam o Minecraft tratar normalmente.
-                    return new EmiStackInteraction(EmiStack.of(stack), null, false);
-                }
+            ItemStack stack = screen.getHoveredItem(mouseX, mouseY);
+            if (stack.isEmpty()) {
+                return EmiStackInteraction.EMPTY;
             }
-            return EmiStackInteraction.EMPTY;
+            // clickable=false: teclas de atalho (R/U) podem resolver o stack sob o mouse,
+            // mas cliques não são interceptados pelo EMI — deixam o Minecraft tratar normalmente.
+            return new EmiStackInteraction(EmiStack.of(stack), null, false);
         }
     }
 }

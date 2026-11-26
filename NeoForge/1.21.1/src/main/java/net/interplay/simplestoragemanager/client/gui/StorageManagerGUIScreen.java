@@ -9,6 +9,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
+import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
@@ -2070,6 +2071,24 @@ public class StorageManagerGUIScreen extends AbstractContainerScreen<StorageMana
             }
         }
         return null;
+    }
+
+    /**
+     * Item sob o mouse em coordenadas absolutas da tela, incluindo os inventários conectados
+     * (snapshots). A lógica fica em {@link TerminalHoverHit}, fora desta classe já extensa.
+     */
+    public ItemStack getHoveredItem(double mouseX, double mouseY) {
+        return TerminalHoverHit.hovered(hoverContext(), mouseX, mouseY).stack();
+    }
+
+    /** Retângulo do slot sob o mouse, usado pelo JEI para registrar o ingrediente clicável. */
+    public Rect2i getHoveredSlotRect(double mouseX, double mouseY) {
+        return TerminalHoverHit.hovered(hoverContext(), mouseX, mouseY).slotRect();
+    }
+
+    private TerminalHoverHit.Context hoverContext() {
+        return new TerminalHoverHit.Context(variant, view, visualRemotePreviewItems, remoteItems,
+                menu, leftPos, topPos);
     }
 
     private boolean pointHit(TerminalScreenLayout.Point point, double x, double y) {

@@ -3,23 +3,29 @@ package net.interplay.simplestoragemanager.integration;
 import dev.architectury.event.CompoundEventResult;
 import me.shedaniel.math.Point;
 import me.shedaniel.rei.api.client.plugins.REIClientPlugin;
-import me.shedaniel.rei.api.client.registry.category.CategoryRegistry;
+import me.shedaniel.rei.api.client.registry.display.DisplayRegistry;
 import me.shedaniel.rei.api.client.registry.screen.FocusedStackProvider;
 import me.shedaniel.rei.api.client.registry.screen.ScreenRegistry;
 import me.shedaniel.rei.api.client.registry.transfer.TransferHandlerRegistry;
 import me.shedaniel.rei.api.client.registry.transfer.simple.SimpleTransferHandler;
 import me.shedaniel.rei.api.common.category.CategoryIdentifier;
 import me.shedaniel.rei.api.common.display.Display;
+import me.shedaniel.rei.api.common.entry.EntryIngredient;
 import me.shedaniel.rei.api.common.entry.EntryStack;
 import me.shedaniel.rei.api.common.util.EntryStacks;
 import me.shedaniel.rei.forge.REIPluginClient;
+import me.shedaniel.rei.plugin.common.displays.crafting.DefaultCustomShapedDisplay;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.world.inventory.Slot;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.world.item.crafting.RecipeType;
 import net.interplay.simplestoragemanager.client.gui.StorageManagerGUIScreen;
-import net.interplay.simplestoragemanager.client.gui.TerminalScreenLayout;
-import net.interplay.simplestoragemanager.init.SimplestoragemanagerModItems;
+import net.interplay.simplestoragemanager.recipe.StorageManagerUpgradeRecipe;
 import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * REI (Roughly Enough Items) integration for the Simple Storage Manager terminal.
@@ -28,8 +34,10 @@ import net.interplay.simplestoragemanager.world.inventory.StorageManagerGUIMenu;
  * annotation. It mirrors what REI does for the vanilla crafting table:
  *
  * <ul>
- *   <li>The terminal item is registered as a workstation for vanilla crafting recipes,
- *       so REI associates the terminal with crafting (the equivalent of a catalyst).</li>
+ *   <li>Um display para a receita de upgrade na categoria de crafting, registrado com
+ *       {@code registerRecipeFiller}: a receita é {@code isSpecial()} e o gerador padrão do REI
+ *       não a enxerga. O item do terminal não é workstation, para que o U mostre a receita onde
+ *       ele é ingrediente em vez de todas as receitas de crafting.</li>
  *   <li>A {@link SimpleTransferHandler} is registered for {@link StorageManagerGUIMenu}.
  *       The nine terminal crafting-grid slots are the input slots (destination of the
  *       "[+] move items" button) and, exactly like REI's vanilla crafting handler, the
@@ -55,11 +63,36 @@ public final class ReiTerminalIntegration implements REIClientPlugin {
     private static final CategoryIdentifier<Display> CRAFTING =
             CategoryIdentifier.of("minecraft", "plugins/crafting");
 
+    /**
+     * A receita de upgrade é {@code isSpecial()} para preservar os componentes do terminal e o
+     * gerador padrão de displays do REI cobre apenas ShapedRecipe/ShapelessRecipe. Registramos um
+     * filler para que o REI a exiba na categoria de crafting e o U sobre o terminal mostre essa
+     * receita em vez de todas as receitas do jogo.
+     */
     @Override
-    public void registerCategories(CategoryRegistry registry) {
-        registry.addWorkstations(CRAFTING,
-                EntryStacks.of(SimplestoragemanagerModItems.STORAGE_MANAGER.get()));
+    public void registerDisplays(DisplayRegistry registry) {
+        registry.registerRecipeFiller(
+            StorageManagerUpgradeRecipe.class,
+            RecipeType.CRAFTING,
+            holder -> {
+                StorageManagerUpgradeRecipe recipe = holder.value();
+                return new DefaultCustomShapedDisplay(
+                    holder,
+                    inputs(recipe),
+                    List.of(EntryIngredient.of(EntryStacks.of(
+                        recipe.getResultItem(RegistryAccess.EMPTY)))),
+                    recipe.pattern.width(),
+                    recipe.pattern.height()
+                );
+            }
+        );
     }
+
+    /**
+     * Não registramos o item do terminal como workstation de crafting: isso faria o U mostrar
+     * todas as receitas da categoria (o equivalente à setinha do NEI 1.7.10) em vez da receita
+     * onde o terminal é ingrediente.
+     */
 
     @Override
     public void registerScreens(ScreenRegistry registry) {
@@ -80,16 +113,24 @@ public final class ReiTerminalIntegration implements REIClientPlugin {
                         StorageManagerGUIMenu.CRAFTING_GRID_START + StorageManagerGUIMenu.CRAFTING_GRID_COUNT)));
     }
 
-    private static TerminalScreenLayout.Variant variantOf(StorageManagerGUIScreen screen) {
-        return screen.getYSize() >= TerminalScreenLayout.BIG.imageHeight()
-                ? TerminalScreenLayout.BIG
-                : TerminalScreenLayout.SMALL;
+    /** Converte os ingredients da receita de upgrade nas entradas esperadas pelo REI. */
+    private static List<EntryIngredient> inputs(StorageManagerUpgradeRecipe recipe) {
+        List<EntryIngredient> inputs = new ArrayList<>();
+        for (Ingredient ingredient : recipe.getIngredients()) {
+            List<EntryStack<?>> stacks = new ArrayList<>();
+            for (ItemStack stack : ingredient.getItems()) {
+                if (!stack.isEmpty()) stacks.add(EntryStacks.of(stack));
+            }
+            inputs.add(stacks.isEmpty() ? EntryIngredient.empty() : EntryIngredient.of(stacks));
+        }
+        return inputs;
     }
 
     /**
-     * Resolves the stack under the mouse from the terminal's crafting grid and the player's
-     * inventory (main inventory + hotbar), so REI's shortcut keys (recipes / uses / favorite)
-     * work on hover without requiring a previous click.
+     * Resolves the stack under the mouse from the terminal's crafting grid, the player's
+     * personal inventory (main inventory + hotbar) and the remote inventories (snapshots),
+     * so REI's shortcut keys (recipes / uses / favorite) work on hover without requiring a
+     * previous click.
      */
     private static final class TerminalFocusedStackProvider implements FocusedStackProvider {
 
@@ -98,29 +139,11 @@ public final class ReiTerminalIntegration implements REIClientPlugin {
             if (!(screen instanceof StorageManagerGUIScreen terminal)) {
                 return CompoundEventResult.pass();
             }
-
-            double x = mouse.x - terminal.getGuiLeft();
-            double y = mouse.y - terminal.getGuiTop();
-
-            Slot slot = terminal.getSlotAtRelative(x, y);
-            if (slot != null) {
-                ItemStack stack = slot.getItem();
-                if (!stack.isEmpty()) {
-                    return CompoundEventResult.<EntryStack<?>>interruptTrue(EntryStacks.of(stack));
-                }
+            ItemStack stack = terminal.getHoveredItem(mouse.x, mouse.y);
+            if (stack.isEmpty()) {
+                return CompoundEventResult.pass();
             }
-
-            // The result slot is not part of getSlotAtRelative(); handle it here as well.
-            TerminalScreenLayout.Point result = variantOf(terminal).result();
-            if (x >= result.x() && x < result.x() + TerminalScreenLayout.SLOT_SIZE
-                    && y >= result.y() && y < result.y() + TerminalScreenLayout.SLOT_SIZE) {
-                ItemStack stack = terminal.getMenu().slots.get(terminal.getMenu().craftingResultIndex).getItem();
-                if (!stack.isEmpty()) {
-                    return CompoundEventResult.<EntryStack<?>>interruptTrue(EntryStacks.of(stack));
-                }
-            }
-
-            return CompoundEventResult.pass();
+            return CompoundEventResult.<EntryStack<?>>interruptTrue(EntryStacks.of(stack));
         }
 
         @Override
