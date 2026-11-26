@@ -21,8 +21,8 @@ A Minecraft mod that lets you access your storage from anywhere, without walking
 
 | Loader | Minecraft | Mod version | Source |
 |---|---|---|---|
-| NeoForge | 1.21.1 | v1.2.0 | `NeoForge/1.21.1` |
-| Fabric | 1.21.8 | v1.2.0 | `Fabric/1.21.8` |
+| NeoForge | 1.21.1 | v1.2.1 | `NeoForge/1.21.1` |
+| Fabric | 1.21.8 | v1.0.0 | `Fabric/1.21.8` |
 
 ## Features
 
