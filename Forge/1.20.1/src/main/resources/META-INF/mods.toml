@@ -1,24 +1,47 @@
 modLoader="javafml"
-loaderVersion="[TODO,)"
-license="TODO"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
 
 [[mods]]
-modId="simplestoragemanager"
-version="TODO"
-displayName="Simple Storage Manager"
-authors="InterPlay"
-description='''TODO: Add a description.'''
+    modId="${mod_id}"
+    version="${mod_version}"
+    displayName="${mod_name}"
+    authors="${mod_authors}"
+    description='''${mod_description}'''
 
-[[dependencies.simplestoragemanager]]
+[[dependencies.${mod_id}]]
     modId="forge"
     mandatory=true
-    versionRange="[TODO,)"
+    versionRange="${forge_version_range}"
     ordering="NONE"
     side="BOTH"
 
-[[dependencies.simplestoragemanager]]
+[[dependencies.${mod_id}]]
     modId="minecraft"
     mandatory=true
-    versionRange="[TODO]"
+    versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"
+
+# Dependencias opcionais (soft dependencies). Equivalem a type="optional" do neoforge.mods.toml.
+# As versoes devem ser revisadas na futura etapa de portabilidade das integracoes.
+[[dependencies.${mod_id}]]
+    modId="jei"
+    mandatory=false
+    versionRange="[15.75.0.243,)"
+    ordering="AFTER"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="roughlyenoughitems"
+    mandatory=false
+    versionRange="[12.1.786,)"
+    ordering="AFTER"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="emi"
+    mandatory=false
+    versionRange="[1.1.24+1.20.1,)"
+    ordering="AFTER"
+    side="CLIENT"
